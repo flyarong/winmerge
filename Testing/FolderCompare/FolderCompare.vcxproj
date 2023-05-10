@@ -520,6 +520,10 @@
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <PrecompiledHeaderOutputFile>$(IntDir)$(TargetName)2.pch</PrecompiledHeaderOutputFile>
     </ClCompile>
+    <ClCompile Include="..\..\Src\Common\cio.cpp">
+      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderOutputFile>$(IntDir)$(TargetName)2.pch</PrecompiledHeaderOutputFile>
+    </ClCompile>
     <ClCompile Include="..\..\Src\Common\ExConverter.cpp">
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
@@ -663,6 +667,7 @@
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <PrecompiledHeaderOutputFile>$(IntDir)$(TargetName)2.pch</PrecompiledHeaderOutputFile>
     </ClCompile>
+    <ClCompile Include="..\..\Src\MergeAppCOMClass.cpp" />
     <ClCompile Include="..\..\Src\MovedBlocks.cpp">
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
@@ -803,6 +808,7 @@
   <ItemGroup>
     <ClInclude Include="..\..\Src\charsets.h" />
     <ClInclude Include="..\..\Src\codepage_detect.h" />
+    <ClInclude Include="..\..\Src\Common\cio.h" />
     <ClInclude Include="..\..\Src\Common\ExConverter.h" />
     <ClInclude Include="..\..\Src\Common\OptionsMgr.h" />
     <ClInclude Include="..\..\Src\Common\RegOptionsMgr.h" />
@@ -835,6 +841,7 @@
     <ClInclude Include="..\..\Src\Common\lwdisp.h" />
     <ClInclude Include="..\..\Src\markdown.h" />
     <ClInclude Include="..\..\Src\MergeApp.h" />
+    <ClInclude Include="..\..\Src\MergeAppCOMClass.h" />
     <ClInclude Include="..\..\Src\MovedLines.h" />
     <ClInclude Include="..\..\Src\Common\multiformatText.h" />
     <ClInclude Include="..\..\Src\OptionsDef.h" />

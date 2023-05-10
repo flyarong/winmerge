@@ -222,6 +222,29 @@ static void GetScriptletsAt(const String& sSearchPath, const String& extension, 
 	}
 }
 
+PluginInfo::PluginInfo()
+	: m_lpDispatch(nullptr)
+	, m_filters(NULL)
+	, m_bAutomatic(false)
+	, m_nFreeFunctions(0)
+	, m_disabled(false)
+	, m_hasArgumentsProperty(false)
+	, m_hasVariablesProperty(false)
+	, m_hasPluginOnEventMethod(false)
+	, m_bAutomaticDefault(false)
+{	
+}
+
+PluginInfo::~PluginInfo()
+{
+	if (m_lpDispatch != nullptr)
+	{
+		if (m_hasPluginOnEventMethod)
+			plugin::InvokePluginOnEvent(EVENTID_TERMINATE, m_lpDispatch);
+		m_lpDispatch->Release();
+	}
+}
+
 void PluginInfo::LoadFilterString()
 {
 	m_filters.clear();
@@ -300,7 +323,7 @@ std::optional<StringView> PluginInfo::GetExtendedPropertyValue(const String& nam
  * @brief Log technical explanation, in English, of script error
  */
 static void
-ScriptletError(const String & scriptletFilepath, const TCHAR *szError)
+ScriptletError(const String & scriptletFilepath, const tchar_t *szError)
 {
 	String msg = _T("Plugin scriptlet error <")
 		+ scriptletFilepath
@@ -405,7 +428,7 @@ struct ScriptInfo
 		: m_scriptletFilepath(scriptletFilepath)
 	{
 	}
-	void Log(const TCHAR *szError)
+	void Log(const tchar_t *szError)
 	{
 		ScriptletError(m_scriptletFilepath, szError);
 	}
@@ -432,9 +455,9 @@ int PluginInfo::MakeInfo(const String & scriptletFilepath, IDispatch *lpDispatch
 	const int nMethodFnc = plugin::GetMethodsFromScript(lpDispatch, methodNamesArray, IdArray);
 	propNamesArray.resize(nPropFnc);
 	methodNamesArray.resize(nMethodFnc);
-	auto SearchScriptForDefinedProperties = [&propNamesArray](const TCHAR* name) -> bool
+	auto SearchScriptForDefinedProperties = [&propNamesArray](const tchar_t* name) -> bool
 	{ return std::find(propNamesArray.begin(), propNamesArray.end(), name) != propNamesArray.end(); };
-	auto SearchScriptForMethodName = [&methodNamesArray](const TCHAR* name) -> bool
+	auto SearchScriptForMethodName = [&methodNamesArray](const tchar_t* name) -> bool
 	{ return std::find(methodNamesArray.begin(), methodNamesArray.end(), name) != methodNamesArray.end(); };
 
 	// Is this plugin for this transformationEvent ?
@@ -621,6 +644,17 @@ int PluginInfo::MakeInfo(const String & scriptletFilepath, IDispatch *lpDispatch
 
 	// get optional property PluginVariables
 	m_hasVariablesProperty = SearchScriptForDefinedProperties(L"PluginVariables");
+
+	// get optional method PluginOnEvent
+	m_hasPluginOnEventMethod = SearchScriptForMethodName(L"PluginOnEvent");
+	if (m_hasPluginOnEventMethod)
+	{
+		if (!plugin::InvokePluginOnEvent(EVENTID_INITIALIZE, lpDispatch))
+		{
+			scinfo.Log(_T("Plugin had PluginOnEvent method, but an error occurred while calling the method"));
+			return -130; // error (Plugin had PluginOnEvent method, but an error occurred while calling the method)
+		}
+	}
 
 	// keep the filename
 	m_name = paths::FindFileName(scriptletFilepath);
@@ -904,6 +938,7 @@ static void FreeAllScripts(PluginArrayPtr& pArray)
 // class CScriptsOfThread : cache the interfaces during the thread life
 
 CScriptsOfThread::CScriptsOfThread()
+	: m_pHostObject(nullptr)
 {
 	// count number of events
 	int i;
@@ -926,6 +961,9 @@ CScriptsOfThread::~CScriptsOfThread()
 {
 	FreeAllScripts();
 
+	if (m_pHostObject)
+		m_pHostObject->Release();
+
 	if (hrInitialize == S_OK || hrInitialize == S_FALSE)
 		CoUninitialize();
 }
@@ -933,6 +971,15 @@ CScriptsOfThread::~CScriptsOfThread()
 bool CScriptsOfThread::bInMainThread()
 {
 	return (CAllThreadsScripts::bInMainThread(this));
+}
+
+void CScriptsOfThread::SetHostObject(IDispatch* pHostObject)
+{
+	if (m_pHostObject)
+		m_pHostObject->Release();
+	m_pHostObject = pHostObject;
+	if (m_pHostObject)
+		m_pHostObject->AddRef();
 }
 
 PluginArray * CScriptsOfThread::GetAvailableScripts(const wchar_t *transformationEvent)
@@ -1112,7 +1159,7 @@ void CAllThreadsScripts::ReloadAllScripts()
 ////////////////////////////////////////////////////////////////////////////////////
 // class CAssureScriptsForThread : control creation/destruction of CScriptsOfThread
 
-CAssureScriptsForThread::CAssureScriptsForThread()
+CAssureScriptsForThread::CAssureScriptsForThread(IDispatch* pHostObject)
 {
 	CScriptsOfThread * scripts = CAllThreadsScripts::GetActiveSetNoAssert();
 	if (scripts == nullptr)
@@ -1120,6 +1167,7 @@ CAssureScriptsForThread::CAssureScriptsForThread()
 		scripts = new CScriptsOfThread;
 		// insert the script in the repository
 		CAllThreadsScripts::Add(scripts);
+		scripts->SetHostObject(pHostObject);
 	}
 	scripts->Lock();
 }
@@ -1130,8 +1178,8 @@ CAssureScriptsForThread::~CAssureScriptsForThread()
 		return;
 	if (scripts->Unlock())
 	{
-		CAllThreadsScripts::Remove(scripts);
 		delete scripts;
+		CAllThreadsScripts::Remove(scripts);
 	}
 }
 
@@ -1145,7 +1193,7 @@ CAssureScriptsForThread::~CAssureScriptsForThread()
  * VB/VBS plugins has an internal error handler, and a message box with caption,
  * and we try to reproduce it for other plugins.
  */
-static void ShowPluginErrorMessage(IDispatch *piScript, LPTSTR description)
+static void ShowPluginErrorMessage(IDispatch *piScript, tchar_t* description)
 {
 	PluginInfo * pInfo = CAllThreadsScripts::GetActiveSet()->GetPluginInfo(piScript);
 	assert(pInfo != nullptr);
@@ -1162,7 +1210,7 @@ static HRESULT safeInvokeA(LPDISPATCH pi, VARIANT *ret, DISPID id, LPCCH op, ...
 {
 	HRESULT h = E_FAIL;
 	SE_Handler seh;
-	TCHAR errorText[500];
+	tchar_t errorText[500];
 	bool bExceptionCatched = false;	
 #ifdef WIN64
 	int nargs = LOBYTE((UINT_PTR)op);
@@ -1187,13 +1235,13 @@ static HRESULT safeInvokeA(LPDISPATCH pi, VARIANT *ret, DISPID id, LPCCH op, ...
 		// structured exception are catched here thanks to class SE_Exception
 		if (!(e.GetErrorMessage(errorText, 500, nullptr)))
 			// don't localize this as we do not localize the known exceptions
-			_tcscpy_safe(errorText, _T("Unknown CException"));
+			tc::tcslcpy(errorText, _T("Unknown CException"));
 		bExceptionCatched = true;
 	}
 	catch(...) 
 	{
 		// don't localize this as we do not localize the known exceptions
-		_tcscpy_safe(errorText, _T("Unknown C++ exception"));
+		tc::tcslcpy(errorText, _T("Unknown C++ exception"));
 		bExceptionCatched = true;
 	}
 
@@ -1215,7 +1263,7 @@ static HRESULT safeInvokeW(LPDISPATCH pi, VARIANT *ret, LPCOLESTR silent, LPCCH 
 {
 	HRESULT h = E_FAIL;
 	SE_Handler seh;
-	TCHAR errorText[500];
+	tchar_t errorText[500];
 	bool bExceptionCatched = false;
 #ifdef WIN64
 	int nargs = LOBYTE((UINT_PTR)op);
@@ -1240,13 +1288,13 @@ static HRESULT safeInvokeW(LPDISPATCH pi, VARIANT *ret, LPCOLESTR silent, LPCCH 
 		// structured exception are catched here thanks to class SE_Exception
 		if (!(e.GetErrorMessage(errorText, 500, nullptr)))
 			// don't localize this as we do not localize the known exceptions
-			_tcscpy_safe(errorText, _T("Unknown CException"));
+			tc::tcslcpy(errorText, _T("Unknown CException"));
 		bExceptionCatched = true;
 	}
 	catch(...) 
 	{
 		// don't localize this as we do not localize the known exceptions
-		_tcscpy_safe(errorText, _T("Unknown C++ exception"));
+		tc::tcslcpy(errorText, _T("Unknown C++ exception"));
 		bExceptionCatched = true;
 	}
 
@@ -1631,6 +1679,20 @@ bool InvokePutPluginVariables(const String& vars, LPDISPATCH piScript)
 	vbstrVars.bstrVal = SysAllocStringLen(wvars.data(), static_cast<unsigned>(wvars.size()));
 
 	HRESULT h = ::safeInvokeW(piScript, nullptr, L"PluginVariables", opPut[1], vbstrVars);
+	return SUCCEEDED(h);
+}
+
+bool InvokePluginOnEvent(int eventType, LPDISPATCH piScript)
+{
+	// argument wmobj
+	VARIANT vdispHostObject{ VT_DISPATCH };
+	vdispHostObject.pdispVal = CAllThreadsScripts::GetActiveSet()->GetHostObject();
+	vdispHostObject.pdispVal->AddRef();
+	// argument eventType
+	VARIANT viEventType{ VT_I4 };
+	viEventType.intVal = eventType;
+
+	HRESULT h = ::safeInvokeW(piScript, nullptr, L"PluginOnEvent", opFxn[2], vdispHostObject, viEventType);
 	return SUCCEEDED(h);
 }
 

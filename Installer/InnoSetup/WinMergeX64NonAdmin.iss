@@ -360,19 +360,19 @@ Name: {app}\Languages\MergeTurkish.lang; Type: files
 Name: {app}\MergePlugins\list.txt; Type: files; Check: not IsComponentSelected('Plugins')
 
 ;Removes the user's guide icon if the user deselects the user's guide component.
-Name: {group}\{cm:UsersGuide}.lnk; Type: files; Check: not IsComponentSelected('Docs')
-Name: {group}\{cm:ReadMe}.lnk; Type: files
+Name: {group}\{cm:UsersGuide}.lnk; Type: files; Check: not IsComponentSelected('Docs') and not WizardNoIcons
+Name: {group}\{cm:ReadMe}.lnk; Type: files; Check: not WizardNoIcons
 
 ;This removes the desktop icon in case the user chooses not to install it after previously having it installed
 Name: {userdesktop}\WinMerge.lnk; Type: files; Check: not IsTaskSelected('DesktopIcon')
 
 ;Removes the Uninstall icon from the start menu...
-Name: {group}\{cm:UninstallProgram,WinMerge}.lnk; Type: files;
-Name: {group}\{cm:UninstallProgram,WinMerge}; Type: files;
+Name: {group}\{cm:UninstallProgram,WinMerge}.lnk; Type: files; Check: not WizardNoIcons
+Name: {group}\{cm:UninstallProgram,WinMerge}; Type: files; Check: not WizardNoIcons
 
 ;Remove ANSI executable link from start menu for NT-based Windows versions
 ;This was installed earlier, but not anymore.
-Name: {group}\WinMerge (ANSI).lnk; Type: files; MinVersion: 0,4
+Name: {group}\WinMerge (ANSI).lnk; Type: files; MinVersion: 0,4; Check: not WizardNoIcons
 
 Name: {app}\Docs; Type: filesandordirs
 
@@ -566,6 +566,7 @@ Source: ..\..\Plugins\dlls\{#ARCH}\IgnoreColumns.dll; DestDir: {app}\MergePlugin
 Source: ..\..\Plugins\dlls\{#ARCH}\IgnoreCommentsC.dll; DestDir: {app}\MergePlugins; Flags: ignoreversion replacesameversion; Components: Plugins
 Source: ..\..\Plugins\dlls\{#ARCH}\IgnoreFieldsComma.dll; DestDir: {app}\MergePlugins; Flags: ignoreversion replacesameversion; Components: Plugins
 Source: ..\..\Plugins\dlls\{#ARCH}\IgnoreFieldsTab.dll; DestDir: {app}\MergePlugins; Flags: ignoreversion replacesameversion; Components: Plugins
+Source: ..\..\Plugins\dlls\IgnoreLeadingLineNumbers.sct; DestDir: {app}\MergePlugins; Flags: ignoreversion replacesameversion; Components: Plugins
 
 ;Frhed
 Source: ..\..\Build\{#ARCH}\Release\Frhed\GPL.txt; DestDir: {app}\Frhed; Components: Core
@@ -633,8 +634,8 @@ Name: "{app}\MergePlugins"
 
 [Icons]
 ;Start Menu Icons
-Name: {group}\WinMerge; Filename: {app}\WinMergeU.exe; AppUserModelID: "Thingamahoochie.WinMerge"
-Name: {group}\{cm:UsersGuide}; Filename: {app}\Docs\WinMerge.chm
+Name: {group}\WinMerge; Filename: {app}\WinMergeU.exe; AppUserModelID: "Thingamahoochie.WinMerge"; Check: not WizardNoIcons
+Name: {group}\{cm:UsersGuide}; Filename: {app}\Docs\WinMerge.chm; Check: not WizardNoIcons
 
 ;Desktop Icon
 Name: {userdesktop}\WinMerge; Filename: {app}\WinMergeU.exe; Tasks: desktopicon
@@ -769,7 +770,7 @@ Name: {app}\Codecs; Type: filesandordirs
 Name: {app}\Formats; Type: filesandordirs
 Name: {app}\Lang; Type: filesandordirs
 
-Name: {group}; Type: dirifempty
+Name: {group}; Type: dirifempty; Check: not WizardNoIcons
 Name: {app}; Type: dirifempty
 
 
@@ -785,7 +786,7 @@ Var
     strGroup_Path: string;
 Begin
     {Saves the path that Inno Setup intended to create the start menu group at}
-    strGroup_Path := ExpandConstant('{group}');
+    if not WizardNoIcons Then strGroup_Path := ExpandConstant('{group}');
 
     {If the start menu path isn't blank then..}
     if strGroup_Path <> '' Then
@@ -843,7 +844,7 @@ Begin
     strOld := OldGroup();
 
     {Detects the current start menu group's path, if any (not creating a group is a valid option)}
-    strNew := ExpandConstant('{group}');
+    If not WizardNoIcons Then strNew := ExpandConstant('{group}');
 
     {removes the start menu portion of the path from the group path making it match the format of strOld}
     StringChange(strNew, ExpandConstant('{commonprograms}\'), '')
@@ -937,6 +938,18 @@ begin
   end;
 end;
 
+procedure RegisterUserTasks();
+var
+  params: string;
+  UserTasksFlags: DWORD;
+  ResultCode: Integer;
+Begin
+  UserTasksFlags := 4097; { 4096(Clipboard Compare)+1(New Text Compare) }
+  RegQueryDWORDValue(HKCU, 'Software\Thingamahoochie\WinMerge', 'UserTasksFlags', UserTasksFlags);
+  params := '/s- /minimize /noninteractive /set-usertasks-to-jumplist ' + IntToStr(UserTasksFlags);
+  Exec(ExpandConstant('{app}\WinMergeU.exe'), params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 {This event procedure is queed each time the user changes pages within the installer}
 Procedure CurPageChanged(CurPage: integer);
 Begin
@@ -944,8 +957,10 @@ Begin
     If CurPage = wpInstalling Then
             {Delete the previous start menu group if the location has changed since the last install}
             DeletePreviousStartMenu;
-    If CurPage = wpFinished Then
+    If CurPage = wpFinished Then Begin
       DeleteRenamedFiles;
+      RegisterUserTasks;
+    End;
 End;
 
 // Checks if context menu is already enabled for shell extension

@@ -956,7 +956,7 @@
     </section>
 	
     <section>
-      <title>Include Subfolders<indexterm>
+      <title>Include subfolders<indexterm>
           <primary>include subfolders</primary>
 
           <secondary>detecting and ignoring differences</secondary>
@@ -1955,6 +1955,28 @@ or is this understood?--></para>
                 <guimenuitem>WinMerge</guimenuitem>ショートカットを、
                 <guimenuitem>比較</guimenuitem>ショートカットで置き換えます。
                 </para>
+              </listitem>
+            </itemizedlist>
+          </listitem>
+        </varlistentry>
+      </variablelist>
+
+      <variablelist>
+        <varlistentry>
+          <term>「形式を指定して比較」メニューを有効にする</term>
+
+          <listitem>
+            <itemizedlist>
+              <listitem>
+                <para><option>無効</option> (デフォルト):
+                <guimenuitem>形式を指定して比較</guimenuitem>
+                メニューをエクスプローラーのコンテキストメニューから削除します。</para>
+              </listitem>
+
+              <listitem>
+                <para><option>有効</option>:
+                <guimenuitem>形式を指定して比較</guimenuitem>
+                メニューをエクスプローラーのコンテキストメニューに追加します。</para>
               </listitem>
             </itemizedlist>
           </listitem>

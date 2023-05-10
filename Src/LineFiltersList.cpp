@@ -14,7 +14,7 @@
 using std::vector;
 
 /** @brief Registry key for saving linefilters. */
-static const TCHAR LineFiltersRegPath[] = _T("LineFilters");
+static const tchar_t LineFiltersRegPath[] = _T("LineFilters");
 
 /**
  * @brief Default constructor.
@@ -195,31 +195,5 @@ void LineFiltersList::SaveFilters()
 		retval1 = m_pOptionsMgr->RemoveOption(filter);
 		filter = strutils::format(_T("%s/Enabled%02u"), LineFiltersRegPath, count);
 		retval2 = m_pOptionsMgr->RemoveOption(filter);
-	}
-}
-
-/**
- * @brief Import old-style filter string into new system.
- * This function imports old-style (2.6.x and earlier) line filters
- * to new linefilter system. Earlier linefilters were saved as one
- * string to registry.
- * @param [in] filters String containing line filters in old-style.
- */
-void LineFiltersList::Import(const String& filters)
-{
-	if (!filters.empty())
-	{
-		const TCHAR sep[] = _T("\r\n");
-		TCHAR *p_filters = (TCHAR *)&filters[0];
-		TCHAR *pfilterNext = nullptr;
-	
-		// find each regular expression and add to list
-		TCHAR *token = _tcstok_s(p_filters, sep, &pfilterNext);
-		while (token != nullptr)
-		{
-			AddFilter(token, true);
-			token = _tcstok_s(nullptr, sep, &pfilterNext);
-		}
-		SaveFilters();
 	}
 }

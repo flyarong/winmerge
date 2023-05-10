@@ -90,6 +90,7 @@ BEGIN_MESSAGE_MAP(CSelectPluginDlg, CTrDialog)
 	ON_CBN_SELENDOK(IDC_PLUGIN_NAME, OnSelchangeUnpackerName)
 	ON_BN_CLICKED(IDC_PLUGIN_ADDPIPE, OnClickedAddPipe)
 	ON_EN_CHANGE(IDC_PLUGIN_PIPELINE, OnChangePipeline)
+	ON_BN_CLICKED(IDC_PLUGIN_SETTINGS, OnClickedSettings)
 	//}}AFX_MSG_MAP
 END_MESSAGE_MAP()
 
@@ -103,7 +104,7 @@ void CSelectPluginDlg::OnOK()
 	GetOptionsMgr()->SaveOption(OPT_PLUGINS_UNPACK_DONT_CHECK_EXTENSION, m_bNoExtensionCheck);
 	GetOptionsMgr()->SaveOption(OPT_PLUGINS_OPEN_IN_SAME_FRAME_TYPE, m_bOpenInSameFrameType);
 	m_ctlPluginPipeline.SaveState(
-		std::vector<const TCHAR *>{_T("Files\\Unpacker"), _T("Files\\Prediffer"), _T("Files\\EditorScript") }
+		std::vector<const tchar_t *>{_T("Files\\Unpacker"), _T("Files\\Prediffer"), _T("Files\\EditorScript") }
 			[static_cast<int>(m_pluginType)]);
 
 	CTrDialog::OnOK();
@@ -127,7 +128,7 @@ BOOL CSelectPluginDlg::OnInitDialog()
 
 	m_ctlPluginPipeline.SetFileControlStates(true);
 	m_ctlPluginPipeline.LoadState(
-		std::vector<const TCHAR *>{_T("Files\\Unpacker"), _T("Files\\Prediffer"), _T("Files\\EditorScript") }
+		std::vector<const tchar_t *>{_T("Files\\Unpacker"), _T("Files\\Prediffer"), _T("Files\\EditorScript") }
 			[static_cast<int>(m_pluginType)]);
 
 	EnableDlgItem(IDC_PLUGIN_OPEN_IN_SAME_FRAME_TYPE, m_pluginType == PluginType::Unpacker);
@@ -166,14 +167,16 @@ void CSelectPluginDlg::prepareListbox()
 	String lastPluginName = parseResult.empty() ? _T("") : parseResult.back().name;
 	INT_PTR nameCount = 0;
 
+	m_cboPluginName.SetRedraw(false);
+
 	if (m_pluginType != PluginType::EditorScript)
 	{
 		COMBOBOXEXITEM item{CBEIF_TEXT};
 		item.iItem = nameCount++;
-		item.pszText = const_cast<LPTSTR>(noPlugin->m_name.c_str());
+		item.pszText = const_cast<tchar_t*>(noPlugin->m_name.c_str());
 		m_cboPluginName.InsertItem(&item);
 		item.iItem = nameCount++;
-		item.pszText = const_cast<LPTSTR>(automaticPlugin->m_name.c_str());
+		item.pszText = const_cast<tchar_t*>(automaticPlugin->m_name.c_str());
 		m_cboPluginName.InsertItem(&item);
 	}
 
@@ -197,7 +200,7 @@ void CSelectPluginDlg::prepareListbox()
 			String text = (_T("[") + processType2 + _T("]"));
 			COMBOBOXEXITEM item{CBEIF_TEXT};
 			item.iItem = nameCount++;
-			item.pszText = const_cast<LPTSTR>(text.c_str());
+			item.pszText = const_cast<tchar_t*>(text.c_str());
 			m_cboPluginName.InsertItem(&item);
 		}
 		for (const auto& [caption, name, id, plugin] : pluginList)
@@ -207,10 +210,11 @@ void CSelectPluginDlg::prepareListbox()
 				bool match = plugin->TestAgainstRegList(m_filteredFilenames);
 				if (m_bNoExtensionCheck || match || lastPluginName == name)
 				{
-					COMBOBOXEXITEM item{CBEIF_TEXT|CBEIF_INDENT};
+					COMBOBOXEXITEM item{CBEIF_TEXT|CBEIF_INDENT|CBEIF_LPARAM};
 					item.iItem = nameCount++;
 					item.iIndent = 1;
-					item.pszText = const_cast<LPTSTR>(name.c_str());
+					item.pszText = const_cast<tchar_t*>(name.c_str());
+					item.lParam = reinterpret_cast<LPARAM>(plugin);
 					m_cboPluginName.InsertItem(&item);
 					if (lastPluginName.empty() && match)
 					{
@@ -242,6 +246,8 @@ void CSelectPluginDlg::prepareListbox()
 		m_cboPluginName.SetCurSel(sel);
 		OnSelchangeUnpackerName();
 	}
+	
+	m_cboPluginName.SetRedraw(true);
 }
 
 void CSelectPluginDlg::OnUnpackerAllowAll() 
@@ -285,7 +291,7 @@ void CSelectPluginDlg::OnSelchangeUnpackerName()
 	else
 	{
 		// initialize with the default unpacker
-		TCHAR szBuf[256]{};
+		tchar_t szBuf[256]{};
 		COMBOBOXEXITEM item{CBEIF_TEXT};
 		item.iItem = i;
 		item.pszText = szBuf;
@@ -331,4 +337,14 @@ void CSelectPluginDlg::OnSelchangeUnpackerName()
 	m_bOpenInSameFrameType = IsDlgButtonChecked(IDC_PLUGIN_OPEN_IN_SAME_FRAME_TYPE);
 
 	UpdateData (FALSE);
+}
+
+void CSelectPluginDlg::OnClickedSettings() 
+{
+	COMBOBOXEXITEM item{CBEIF_LPARAM};
+	item.iItem = m_cboPluginName.GetCurSel();
+	m_cboPluginName.GetItem(&item);
+	auto* plugin = reinterpret_cast<PluginInfo*>(item.lParam);
+	if (plugin)
+		plugin::InvokeShowSettingsDialog(plugin->m_lpDispatch);
 }
