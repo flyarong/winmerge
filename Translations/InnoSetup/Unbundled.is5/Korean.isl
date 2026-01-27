@@ -325,11 +325,11 @@ ShutdownBlockReasonUninstallingApp=%1을(를) 제거하는 중입니다.
 
 NameAndVersion=%1 버전 %2
 AdditionalIcons=바로가기 추가:
-CreateDesktopIcon=바탕화면에 바로가기 만들기(&D)
+CreateDesktopIcon=바탕 화면에 바로가기 만들기(&D)
 CreateQuickLaunchIcon=빠른 실행 아이콘 만들기(&Q)
 ProgramOnTheWeb=%1 웹페이지
 UninstallProgram=%1 제거
-UninstallProgram=LaunchProgram=%1 실행
+LaunchProgram=%1 실행
 AssocFileExtension=%1을 %2 파일 확장자에 연결
 AssocingFileExtension=%1을 %2 파일 확장자와 연결하는 중...
 AutoStartProgramGroupDescription=시작:

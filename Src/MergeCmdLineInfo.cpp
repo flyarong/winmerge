@@ -68,8 +68,36 @@ const tchar_t *MergeCmdLineInfo::EatParam(const tchar_t *p, String &param, bool 
 		param = strutils::makelower(param);
 	}
 	// Strip any leading or trailing whitespace or quotes
-	param.erase(0, param.find_first_not_of(_T(" \t\r\n\"")));
-	param.erase(param.find_last_not_of(_T(" \t\r\n\"")) + 1);
+	param.erase(0, param.find_first_not_of(_T(" \t\r\n")));
+	param.erase(param.find_last_not_of(_T(" \t\r\n")) + 1);
+	if (!param.empty() && param.front() == '"')
+	{
+		param = ([](const String& param) -> String
+			{
+				String result;
+				bool inquotes = false;
+				for (int i = 0; i < param.length(); ++i)
+				{
+					if (param[i] == '"')
+					{
+						if (inquotes && i < param.length() - 1 && param[i + 1] == '"')
+						{
+							result += '"';
+							++i;
+						}
+						else
+						{
+							inquotes = !inquotes;
+						}
+					}
+					else
+					{
+						result += param[i];
+					}
+				}
+				return result;
+			})(param);
+	}
 	return q;
 }
 
@@ -121,7 +149,6 @@ MergeCmdLineInfo::MergeCmdLineInfo(const tchar_t* q)
 	, m_bShowCompareAsMenu(false)
 	, m_bEscShutdown(false)
 	, m_bExitIfNoDiff(Disabled)
-	, m_bRecurse(false)
 	, m_bNonInteractive(false)
 	, m_nSingleInstance()
 	, m_bShowUsage(false)
@@ -297,13 +324,26 @@ void MergeCmdLineInfo::ParseWinMergeCmdLine(const tchar_t *q)
 				m_nCompMethod = CompareMethodType::DATE_SIZE;
 			else if (param == _T("size"))
 				m_nCompMethod = CompareMethodType::SIZE;
+			else if (param == _T("existence"))
+				m_nCompMethod = CompareMethodType::EXISTENCE;
 			else
 				m_sErrorMessages.emplace_back(_T("Unknown compare method '") + param + _T("' specified"));
 		}
 		else if (param == _T("r"))
 		{
 			// -r to compare recursively
-			m_bRecurse = true;
+			if (*q == ':')
+			{
+				q = EatParam(q + 1, param);
+				m_bRecurse = (tc::ttoi(param.c_str()) != 0);
+			}
+			else
+				m_bRecurse = true;
+		}
+		else if (param == _T("r-"))
+		{
+			// -r to compare non-recursively
+			m_bRecurse = false;
 		}
 		else if (param == _T("s-"))
 		{

@@ -8,15 +8,12 @@
 #include "paths.h"
 #include <windows.h>
 #include <cassert>
-#include <cstring>
-#include <direct.h>
 #pragma warning (push)			// prevent "warning C4091: 'typedef ': ignored on left of 'tagGPFIDL_FLAGS' when no variable is declared"
 #pragma warning (disable:4091)	// VC bug when using XP enabled toolsets.
 #include <shlobj.h>
 #pragma warning (pop)
 #include <shlwapi.h>
 #include "PathContext.h"
-#include "coretools.h"
 #include "TFile.h"
 
 namespace paths
@@ -164,8 +161,8 @@ static bool IsDirName(const String& sDir)
 	// http://msdn.microsoft.com/library/default.asp?url=/library/en-us/fileio/fs/findfirstfile.asp
 	// You cannot use root directories as the lpFileName input string for FindFirstFile - with or without a trailing backslash.
 	size_t count = 0;
-	if ((sDir[0] && sDir[1] == ':' && sDir[2] == '\0') ||
-	    // \\host\share or \\host\share\ 
+	if ((sDir[0] && sDir[1] == ':' && (sDir[2] == '\0' || (sDir[2] == '\\' && sDir[3] == '\0'))) ||
+	    // "\\host\share" or "\\host\share\"
 	    (sDir[0] == '\\' && sDir[1] == '\\' && 
 	     (count = std::count(sDir.begin(), sDir.end(), ('\\'))) <= 4 &&
 	     (count == 3 || (count == 4 && sDir.back() == '\\'))))
@@ -548,7 +545,7 @@ String GetParentPath(const String& path)
 	size_t len = parentPath.length();
 
 	// Remove last '\' from paths
-	if (parentPath[len - 1] == '\\')
+	if (len > 0 && parentPath[len - 1] == '\\')
 	{
 		parentPath.resize(len - 1);
 		--len;
@@ -738,10 +735,20 @@ String GetPathOnly(const String& fullpath)
 	return spath;
 }
 
-bool IsURL(const String& path)
+bool IsURL(const String& abspath)
 {
-	size_t pos = path.find(':');
-	return (pos != String::npos && pos > 1);
+	for (size_t i = 0; i < abspath.length(); ++i)
+	{
+		const auto c = abspath[i];
+		if (c == '\\' || c == '/')
+		{
+			// If there is a \ or / before the : character, consider it not a URL.
+			return false;
+		}
+		else if (c == ':')
+			return (i != 1);
+	}
+	return false;
 }
 
 bool IsURLorCLSID(const String& path)
@@ -759,7 +766,16 @@ String FromURL(const String& url)
 	std::vector<tchar_t> path((std::max)(size_t(MAX_PATH), url.length() + 1));
 	DWORD size = static_cast<DWORD>(path.size());
 	PathCreateFromUrl(url.c_str(), path.data(), &size, 0);
-	return path.data();
+	String result(path.data());
+	return ucr::toTString(std::string(result.begin(), result.end()));
+}
+
+String urlEncodeFileName(const String& filename)
+{
+	String encoded = filename;
+	strutils::replace(encoded, _T("%"), _T("%25"));
+	strutils::replace(encoded, _T("#"), _T("%23"));
+	return encoded;
 }
 
 bool IsDecendant(const String& path, const String& ancestor)
@@ -803,6 +819,12 @@ bool IsValidName(const String& name)
 			return false;
 
 	return true;
+}
+
+bool IsNullDeviceName(const String& name)
+{
+	return (tc::tcsicmp(name.c_str(), NATIVE_NULL_DEVICE_NAME) == 0 ||
+			tc::tcsicmp(name.c_str(), NATIVE_NULL_DEVICE_NAME_LONG) == 0);
 }
 
 }

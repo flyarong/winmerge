@@ -13,7 +13,6 @@
 
 #include "stdafx.h"
 #include "HexMergeFrm.h"
-#include "Merge.h"
 #include "HexMergeDoc.h"
 #include "HexMergeView.h"
 #include "OptionsDef.h"
@@ -83,9 +82,9 @@ void CHexMergeFrame::CreateHexWndStatusBar(CStatusBar &wndStatusBar, CWnd *pwndP
 	auto pointToPixel = [lpx](int point) { return MulDiv(point, lpx, 72); };
 	wndStatusBar.Create(pwndPane, WS_CHILD|WS_VISIBLE);
 	wndStatusBar.SetIndicators(0, 3);
-	wndStatusBar.SetPaneInfo(0, 0, SBPS_STRETCH, 0);
-	wndStatusBar.SetPaneInfo(1, 0, 0, pointToPixel(60));
-	wndStatusBar.SetPaneInfo(2, 0, 0, pointToPixel(60));
+	wndStatusBar.SetPaneInfo(0, 0, SBPS_STRETCH | SBPS_CLICKABLE, 0);
+	wndStatusBar.SetPaneInfo(1, 0, SBPS_CLICKABLE, pointToPixel(60));
+	wndStatusBar.SetPaneInfo(2, 0, SBPS_CLICKABLE, pointToPixel(60));
 	wndStatusBar.SetParent(this);
 	wndStatusBar.SetWindowPos(&wndBottom, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
 }
@@ -134,9 +133,11 @@ BOOL CHexMergeFrame::OnCreateClient( LPCREATESTRUCT /*lpcs*/,
 	m_wndFilePathBar.SetOnCaptionChangedCallback([&](int pane, const String& sText) {
 		m_pMergeDoc->SetDescription(pane ,sText);
 		m_pMergeDoc->UpdateHeaderPath(pane);
+		GetView(pane)->SetFocus();
 	});
 	m_wndFilePathBar.SetOnFileSelectedCallback([&](int pane, const String& sFilepath) {
 		m_pMergeDoc->ChangeFile(pane, sFilepath);
+		GetView(pane)->SetFocus();
 	});
 
 	// Set filename bars inactive so colors get initialized
@@ -220,7 +221,7 @@ void CHexMergeFrame::SavePosition()
 
 void CHexMergeFrame::SaveActivePane()
 {
-	if (CWnd* pLeft = m_wndSplitter.GetPane(0, 0))
+	if (m_wndSplitter.GetPane(0, 0))
 	{
 		GetOptionsMgr()->SaveOption(OPT_ACTIVE_PANE, GetActivePane());
 	}
@@ -269,9 +270,9 @@ void CHexMergeFrame::UpdateHeaderSizes()
 		}
 	}
 	
-	if (!std::equal(m_nLastSplitPos, m_nLastSplitPos + nPaneCount - 1, w))
+	if (!std::equal(m_nLastSplitPos, m_nLastSplitPos + nPaneCount, w))
 	{
-		std::copy_n(w, nPaneCount - 1, m_nLastSplitPos);
+		std::copy_n(w, nPaneCount, m_nLastSplitPos);
 
 		// resize controls in header dialog bar
 		m_wndFilePathBar.Resize(w);
@@ -308,6 +309,12 @@ int CHexMergeFrame::GetActivePane()
 	else
 		m_wndSplitter.GetActivePane(&nPane, nullptr);
 	return nPane;
+}
+
+CWnd* CHexMergeFrame::GetView(int nPane)
+{
+	return (m_wndSplitter.GetColumnCount() > 1) ? 
+		m_wndSplitter.GetPane(0, nPane) : m_wndSplitter.GetPane(nPane, 0);
 }
 
 void CHexMergeFrame::SetActivePane(int nPane)
@@ -348,7 +355,7 @@ void CHexMergeFrame::OnIdleUpdateCmdUI()
 		SCROLLINFO si, siView[3];
 		// Synchronize horizontal scrollbars
 		pView[0]->GetScrollInfo(SB_HORZ, &si, SIF_ALL | SIF_DISABLENOSCROLL);
-		m_HScrollInfo[0] = si;
+		m_HScrollInfo[0] = siView[0] = si;
 		for (pane = 1; pane < nColumns; ++pane)
 		{
 			SCROLLINFO siCur;
@@ -380,7 +387,7 @@ void CHexMergeFrame::OnIdleUpdateCmdUI()
 
 		// Synchronize vertical scrollbars
 		pView[0]->GetScrollInfo(SB_VERT, &si, SIF_ALL | SIF_DISABLENOSCROLL);
-		m_VScrollInfo[0] = si;
+		m_VScrollInfo[0] = siView[0] = si;
 		for (pane = 1; pane < nColumns; ++pane)
 		{
 			SCROLLINFO siCur;

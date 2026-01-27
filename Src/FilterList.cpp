@@ -8,6 +8,7 @@
 #include "FilterList.h"
 #include <vector>
 #include <Poco/RegularExpression.h>
+#include <Poco/Exception.h>
 #include "unicoder.h"
 
 using Poco::RegularExpression;
@@ -31,19 +32,43 @@ FilterList::~FilterList()
  * The regular expression is compiled and studied for better performance.
  * @param [in] regularExpression Regular expression string.
  * @param [in] encoding Expression encoding.
- * @param [in] excluded 
  */
-void FilterList::AddRegExp(const std::string& regularExpression, bool exclude)
+void FilterList::AddRegExp(const std::string& regularExpression, bool throwIfInvalid)
 {
 	try
 	{
-		auto& list = exclude ? m_listExclude : m_list;
-		list.push_back(filter_item_ptr(new filter_item(regularExpression, RegularExpression::RE_UTF8)));
+		m_list.push_back(filter_item_ptr(new filter_item(regularExpression, RegularExpression::RE_UTF8)));
 	}
-	catch (...)
+	catch (Poco::RegularExpressionException& e)
 	{
-		// TODO:
+		if (throwIfInvalid)
+			throw std::runtime_error(e.message().c_str());
 	}
+}
+
+static bool match(const std::vector <filter_item_ptr>& list, const std::string& string)
+{
+	if (list.empty())
+		return false;
+	bool retval = false;
+	for (const auto& item : list)
+	{
+		int result = 0;
+		RegularExpression::Match match;
+		try
+		{
+			result = item->regexp.match(string, 0, match);
+		}
+		catch (...)
+		{
+		}
+		if (result > 0)
+		{
+			retval = true;
+			break;
+		}
+	}
+	return retval;
 }
 
 /** 
@@ -57,9 +82,6 @@ void FilterList::AddRegExp(const std::string& regularExpression, bool exclude)
  */
 bool FilterList::Match(const std::string& string, int codepage/*=CP_UTF8*/)
 {
-	const size_t count = m_list.size();
-	bool retval = m_list.size() == 0;
-
 	// convert string into UTF-8
 	ucr::buffer buf(string.length() * 2);
 
@@ -67,61 +89,7 @@ bool FilterList::Match(const std::string& string, int codepage/*=CP_UTF8*/)
 			ucr::convert(ucr::NONE, codepage, reinterpret_cast<const unsigned char *>(string.c_str()), 
 					string.length(), ucr::UTF8, ucr::CP_UTF_8, &buf);
 
-	unsigned i = 0;
-	while (i < count && !retval)
-	{
-		const filter_item_ptr& item = m_list[i];
-		int result = 0;
-		RegularExpression::Match match;
-		try
-		{
-			if (buf.size > 0)
-				result = item->regexp.match(std::string(reinterpret_cast<const char *>(buf.ptr), buf.size), 0, match);
-			else
-				result = item->regexp.match(string, 0, match);
-		}
-		catch (...)
-		{
-			// TODO:
-		}
-		if (result > 0)
-		{
-			retval = true;
-		}
-		else
-			++i;
-	}
-
-	if (!retval)
-		return retval;
-
-	i = 0;
-	const size_t countExclude = m_listExclude.size();
-	while (i < countExclude && retval)
-	{
-		const filter_item_ptr& item = m_listExclude[i];
-		int result = 0;
-		RegularExpression::Match match;
-		try
-		{
-			if (buf.size > 0)
-				result = item->regexp.match(std::string(reinterpret_cast<const char *>(buf.ptr), buf.size), 0, match);
-			else
-				result = item->regexp.match(string, 0, match);
-		}
-		catch (...)
-		{
-			// TODO:
-		}
-		if (result > 0)
-		{
-			retval = false;
-		}
-		else
-			++i;
-	}
-
-	return retval;
+	return match(m_list, (buf.size > 0) ? std::string(reinterpret_cast<const char*>(buf.ptr), buf.size) : string);
 }
 
 /**
@@ -136,16 +104,11 @@ void FilterList::CloneFrom(const FilterList* filterList)
 		return;
 
 	m_list.clear();
-	m_listExclude.clear();
 
 	size_t count = filterList->m_list.size();
+	m_list.reserve(count);
 	for (size_t i = 0; i < count; i++)
 	{
 		m_list.emplace_back(std::make_shared<filter_item>(filterList->m_list[i].get()));
-	}
-	size_t countExclude = filterList->m_listExclude.size();
-	for (size_t i = 0; i < countExclude; i++)
-	{
-		m_listExclude.emplace_back(std::make_shared<filter_item>(filterList->m_listExclude[i].get()));
 	}
 }

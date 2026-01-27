@@ -9,7 +9,6 @@
 #include <vector>
 #include "MergeDoc.h"
 
-#include "Merge.h"
 #include "DiffList.h"
 #include "stringdiffs.h"
 
@@ -59,6 +58,7 @@ PrintVirtualLineToRealLineMap(
 	{
 		String str = strutils::format(_T("vline%d: "), static_cast<int>(i));
 		std::vector<String> ary;
+		ary.reserve(npanes);
 		for (int j = 0; j < npanes; ++j)
 			ary.push_back(vlines[i][j] == DiffMap::GHOST_MAP_ENTRY ? _T("-----") : strutils::format(_T("%5d"), vlines[i][j]));
 		str += strutils::join(ary.begin(), ary.end(), _T(",")) + _T("\n");
@@ -93,6 +93,7 @@ CreateVirtualLineToRealLineMap(
 	const DiffMap& diffmap, int nlines0, int nlines1)
 {
 	std::vector<std::array<int, 2>> vlines;
+	vlines.reserve((std::max)(nlines0, nlines1) * 3 / 2); // Roughly pre-allocate space for the list.
 	int line0 = 0, line1 = 0;
 	while (line0 < nlines0)
 	{
@@ -129,6 +130,7 @@ CreateVirtualLineToRealLineMap3way(
 	std::vector<std::array<int, 2>> vlines12 = CreateVirtualLineToRealLineMap(diffmap12, nlines1, nlines2);
 	std::vector<std::array<int, 2>> vlines20 = CreateVirtualLineToRealLineMap(diffmap20, nlines2, nlines0);
 	std::vector<std::array<int, 3>> vlines;
+	vlines.reserve((std::max)({ nlines0, nlines1, nlines2 }) * 3 / 2);  // Roughly pre-allocate space for the list.
 	size_t i01 = 0, i12 = 0, i20 = 0;
 	int line0 = 0, line1 = 0, line2 = 0;
 	bool is_vlines20_usable = true;
@@ -265,6 +267,9 @@ OP_TYPE CMergeDoc::ComputeOpType3way(
 	int line1 = diffrange.begin[1] + vlines[index][1];
 	int line2 = diffrange.begin[2] + vlines[index][2];
 
+	strdiff::EolCompareMode eolMode = diffOptions.bIgnoreLineBreaks ? strdiff::EOL_AS_SPACE :
+		diffOptions.bIgnoreEol ? strdiff::EOL_IGNORE : strdiff::EOL_STRICT;
+
 	if (vlines[index][0] != DiffMap::GHOST_MAP_ENTRY &&
 	    vlines[index][1] != DiffMap::GHOST_MAP_ENTRY &&
 	    vlines[index][2] == DiffMap::GHOST_MAP_ENTRY)
@@ -272,7 +277,7 @@ OP_TYPE CMergeDoc::ComputeOpType3way(
 		String strLine0(m_ptBuf[0]->GetLineChars(line0), m_ptBuf[0]->GetFullLineLength(line0));
 		String strLine1(m_ptBuf[1]->GetLineChars(line1), m_ptBuf[1]->GetFullLineLength(line1));
 		if (strdiff::Compare(strLine0, strLine1,
-			!diffOptions.bIgnoreCase, !diffOptions.bIgnoreEol,
+			!diffOptions.bIgnoreCase, eolMode,
 			diffOptions.nIgnoreWhitespace, diffOptions.bIgnoreNumbers) == 0)
 			return OP_3RDONLY;
 		return OP_DIFF;
@@ -284,7 +289,7 @@ OP_TYPE CMergeDoc::ComputeOpType3way(
 		String strLine0(m_ptBuf[0]->GetLineChars(line0), m_ptBuf[0]->GetFullLineLength(line0));
 		String strLine2(m_ptBuf[2]->GetLineChars(line2), m_ptBuf[2]->GetFullLineLength(line2));
 		if (strdiff::Compare(strLine0, strLine2,
-			!diffOptions.bIgnoreCase, !diffOptions.bIgnoreEol,
+			!diffOptions.bIgnoreCase, eolMode,
 			diffOptions.nIgnoreWhitespace, diffOptions.bIgnoreNumbers) == 0)
 			return OP_2NDONLY;
 		return OP_DIFF;
@@ -296,7 +301,7 @@ OP_TYPE CMergeDoc::ComputeOpType3way(
 		String strLine1(m_ptBuf[1]->GetLineChars(line1), m_ptBuf[1]->GetFullLineLength(line1));
 		String strLine2(m_ptBuf[2]->GetLineChars(line2), m_ptBuf[2]->GetFullLineLength(line2));
 		if (strdiff::Compare(strLine1, strLine2,
-			!diffOptions.bIgnoreCase, !diffOptions.bIgnoreEol,
+			!diffOptions.bIgnoreCase, eolMode,
 			diffOptions.nIgnoreWhitespace, diffOptions.bIgnoreNumbers) == 0)
 			return OP_1STONLY;
 		return OP_DIFF;
@@ -307,15 +312,15 @@ OP_TYPE CMergeDoc::ComputeOpType3way(
 		String strLine1(m_ptBuf[1]->GetLineChars(line1), m_ptBuf[1]->GetFullLineLength(line1));
 		String strLine2(m_ptBuf[2]->GetLineChars(line2), m_ptBuf[2]->GetFullLineLength(line2));
 		if (strdiff::Compare(strLine0, strLine1,
-			!diffOptions.bIgnoreCase, !diffOptions.bIgnoreEol,
+			!diffOptions.bIgnoreCase, eolMode,
 			diffOptions.nIgnoreWhitespace, diffOptions.bIgnoreNumbers) == 0)
 			return OP_3RDONLY;
 		if (strdiff::Compare(strLine0, strLine2,
-			!diffOptions.bIgnoreCase, !diffOptions.bIgnoreEol,
+			!diffOptions.bIgnoreCase, eolMode,
 			diffOptions.nIgnoreWhitespace, diffOptions.bIgnoreNumbers) == 0)
 			return OP_2NDONLY;
 		if (strdiff::Compare(strLine1, strLine2,
-			!diffOptions.bIgnoreCase, !diffOptions.bIgnoreEol,
+			!diffOptions.bIgnoreCase, eolMode,
 			diffOptions.nIgnoreWhitespace, diffOptions.bIgnoreNumbers) == 0)
 			return OP_1STONLY;
 		return OP_DIFF;
@@ -323,7 +328,7 @@ OP_TYPE CMergeDoc::ComputeOpType3way(
 }
 
 /**
- * @brief Divide diff blocks to match lines in diff blocks.
+ * @brief Divide diff blocks to align similar lines in diff blocks.
  */
 void CMergeDoc::AdjustDiffBlocks()
 {
@@ -436,7 +441,7 @@ void CMergeDoc::AdjustDiffBlocks()
 }
 
 /**
- * @brief Divide diff blocks to match lines in diff blocks. (3-way)
+ * @brief Divide diff blocks to align similar lines in diff blocks. (3-way)
  */
 void CMergeDoc::AdjustDiffBlocks3way()
 {
@@ -460,9 +465,9 @@ void CMergeDoc::AdjustDiffBlocks3way()
 			int lo0 = 0, hi0 = nlines0 - 1;
 			int lo1 = 0, hi1 = nlines1 - 1;
 			int lo2 = 0, hi2 = nlines2 - 1;
-			const std::vector<WordDiff> worddiffs01 = GetWordDiffArrayInRange(diffrange.begin, diffrange.end, 0, 1);
-			const std::vector<WordDiff> worddiffs12 = GetWordDiffArrayInRange(diffrange.begin, diffrange.end, 1, 2);
-			const std::vector<WordDiff> worddiffs20 = GetWordDiffArrayInRange(diffrange.begin, diffrange.end, 2, 0);
+			const std::vector<WordDiff> worddiffs01 = GetWordDiffArrayInRange(diffrange.begin, diffrange.end, false, 0, 1);
+			const std::vector<WordDiff> worddiffs12 = GetWordDiffArrayInRange(diffrange.begin, diffrange.end, false, 1, 2);
+			const std::vector<WordDiff> worddiffs20 = GetWordDiffArrayInRange(diffrange.begin, diffrange.end, false, 2, 0);
 			DiffMap diffmap01, diffmap12, diffmap20;
 			diffmap01.InitDiffMap(nlines0);
 			diffmap12.InitDiffMap(nlines1);

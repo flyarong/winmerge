@@ -13,8 +13,8 @@
 #include "stdafx.h"
 #include "OpenView.h"
 #include <vector>
-#include <sys/stat.h>
 #include "UnicodeString.h"
+#include "Logger.h"
 #include "Merge.h"
 #include "OpenDoc.h"
 #include "ProjectFile.h"
@@ -29,6 +29,8 @@
 #include "Bitmap.h"
 #include "DropHandler.h"
 #include "FileFilterHelper.h"
+#include "FileFilterHelperMenu.h"
+#include "FilterErrorMessages.h"
 #include "Plugins.h"
 #include "MergeAppCOMClass.h"
 #include "BCMenu.h"
@@ -36,6 +38,7 @@
 #include "Win_VersionHelper.h"
 #include "OptionsProject.h"
 #include "Merge7zFormatMergePluginImpl.h"
+#include "DarkModeLib.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -70,7 +73,10 @@ BEGIN_MESSAGE_MAP(COpenView, CFormView)
 	ON_NOTIFY_RANGE(CBEN_BEGINEDIT, IDC_PATH0_COMBO, IDC_PATH2_COMBO, OnSetfocusPathCombo)
 	ON_NOTIFY_RANGE(CBEN_DRAGBEGIN, IDC_PATH0_COMBO, IDC_PATH2_COMBO, OnDragBeginPathCombo)
 	ON_WM_TIMER()
+	ON_CBN_EDITCHANGE(IDC_EXT_COMBO, OnExtEditChange)
+	ON_CBN_SELCHANGE(IDC_EXT_COMBO, OnExtEditChange)
 	ON_BN_CLICKED(IDC_SELECT_FILTER, OnSelectFilter)
+	ON_NOTIFY(BCN_DROPDOWN, IDC_SELECT_FILTER, OnSelectFilterDropDown)
 	ON_BN_CLICKED(IDC_OPTIONS, OnOptions)
 	ON_NOTIFY(BCN_DROPDOWN, IDC_OPTIONS, (OnDropDown<IDC_OPTIONS, IDR_POPUP_PROJECT_DIFF_OPTIONS>))
 	ON_COMMAND_RANGE(ID_PROJECT_DIFF_OPTIONS_WHITESPACE_COMPARE, ID_PROJECT_DIFF_OPTIONS_WHITESPACE_IGNOREALL, OnDiffWhitespace)
@@ -87,8 +93,12 @@ BEGIN_MESSAGE_MAP(COpenView, CFormView)
 	ON_UPDATE_COMMAND_UI(ID_PROJECT_DIFF_OPTIONS_IGNORE_CODEPAGE, OnUpdateDiffIgnoreCP)
 	ON_COMMAND(ID_PROJECT_DIFF_OPTIONS_IGNORE_COMMENTS, OnDiffIgnoreComments)
 	ON_UPDATE_COMMAND_UI(ID_PROJECT_DIFF_OPTIONS_IGNORE_COMMENTS, OnUpdateDiffIgnoreComments)
-	ON_COMMAND_RANGE(ID_PROJECT_DIFF_OPTIONS_COMPMETHOD_FULL_CONTENTS, ID_PROJECT_DIFF_OPTIONS_COMPMETHOD_SIZE, OnCompareMethod)
-	ON_UPDATE_COMMAND_UI_RANGE(ID_PROJECT_DIFF_OPTIONS_COMPMETHOD_FULL_CONTENTS, ID_PROJECT_DIFF_OPTIONS_COMPMETHOD_SIZE, OnUpdateCompareMethod)
+	ON_COMMAND(ID_PROJECT_DIFF_OPTIONS_IGNORE_MISSING_TRAILING_EOL, OnDiffIgnoreMissingTrailingEol)
+	ON_UPDATE_COMMAND_UI(ID_PROJECT_DIFF_OPTIONS_IGNORE_MISSING_TRAILING_EOL, OnUpdateDiffIgnoreMissingTrailingEol)
+	ON_COMMAND(ID_PROJECT_DIFF_OPTIONS_IGNORE_LINE_BREAKS, OnDiffIgnoreLineBreaks)
+	ON_UPDATE_COMMAND_UI(ID_PROJECT_DIFF_OPTIONS_IGNORE_LINE_BREAKS, OnUpdateDiffIgnoreLineBreaks)
+	ON_COMMAND_RANGE(ID_PROJECT_DIFF_OPTIONS_COMPMETHOD_FULL_CONTENTS, ID_PROJECT_DIFF_OPTIONS_COMPMETHOD_EXISTENCE, OnCompareMethod)
+	ON_UPDATE_COMMAND_UI_RANGE(ID_PROJECT_DIFF_OPTIONS_COMPMETHOD_FULL_CONTENTS, ID_PROJECT_DIFF_OPTIONS_COMPMETHOD_EXISTENCE, OnUpdateCompareMethod)
 	ON_WM_ACTIVATE()
 	ON_COMMAND(ID_LOAD_PROJECT, OnLoadProject)
 	ON_COMMAND(ID_SAVE_PROJECT, OnSaveProject)
@@ -109,6 +119,8 @@ BEGIN_MESSAGE_MAP(COpenView, CFormView)
 	ON_COMMAND_RANGE(ID_OPEN_WITH_UNPACKER, ID_OPEN_WITH_UNPACKER, OnCompare)
 	ON_MESSAGE(WM_USER + 1, OnUpdateStatus)
 	ON_WM_PAINT()
+	ON_WM_THEMECHANGED()
+	ON_WM_SETTINGCHANGE()
 	ON_WM_LBUTTONUP()
 	ON_WM_MOUSEMOVE()
 	ON_WM_WINDOWPOSCHANGING()
@@ -138,7 +150,10 @@ COpenView::COpenView()
 	, m_bIgnoreNumbers(false)
 	, m_bIgnoreCodepage(false)
 	, m_bFilterCommentsLines(false)
+	, m_bIgnoreMissingTrailingEol(false)
+	, m_bIgnoreLineBreaks(false)
 	, m_nCompareMethod(0)
+	, m_hTheme(nullptr)
 {
 	// CWnd::EnableScrollBarCtrl() called inside CScrollView::UpdateBars() is quite slow.
 	// Therefore, set m_bInsideUpdate = TRUE so that CScrollView::UpdateBars() does almost nothing.
@@ -190,17 +205,26 @@ void COpenView::OnInitialUpdate()
 		SendDlgItemMessage(IDC_OPTIONS, BM_SETSTYLE, BS_PUSHBUTTON, TRUE);
 		SendDlgItemMessage(ID_SAVE_PROJECT, BM_SETSTYLE, BS_PUSHBUTTON, TRUE);
 		SendDlgItemMessage(IDOK, BM_SETSTYLE, BS_PUSHBUTTON, TRUE);
+		SendDlgItemMessage(IDC_SELECT_FILTER, BM_SETSTYLE, BS_PUSHBUTTON, TRUE);
 	}
 
 	m_sizeOrig = GetTotalSize();
 
-	theApp.TranslateDialog(m_hWnd);
+	I18n::TranslateDialog(m_hWnd);
 
 	if (!LoadImageFromResource(m_image, MAKEINTRESOURCE(IDR_LOGO), _T("IMAGE")))
 	{
 		// FIXME: LoadImageFromResource() seems to fail when running on Wine 5.0.
 		m_image.Create(1, 1, 24, 0);
 	}
+	if (HWND hSelf = GetSafeHwnd())
+	{
+		DarkMode::setWindowCtlColorSubclass(hSelf);
+		DarkMode::setChildCtrlsSubclassAndThemeEx(hSelf, true, true);
+	}
+
+	if (DarkMode::isExperimentalActive())
+		WinMergeDarkMode::InvertLightness(m_image);
 
 	__super::OnInitialUpdate();
 
@@ -210,8 +234,8 @@ void COpenView::OnInitialUpdate()
 	lf.lfCharSet = SYMBOL_CHARSET;
 	lstrcpy(lf.lfFaceName, _T("Wingdings"));
 	m_fontSwapButton.CreateFontIndirect(&lf);
-	const int ids[] = {IDC_SWAP01_BUTTON, IDC_SWAP12_BUTTON, IDC_SWAP02_BUTTON};
-	for (int i = 0; i < sizeof(ids)/sizeof(ids[0]); ++i)
+	const int ids[] = { IDC_SWAP01_BUTTON, IDC_SWAP12_BUTTON, IDC_SWAP02_BUTTON };
+	for (int i = 0; i < sizeof(ids) / sizeof(ids[0]); ++i)
 	{
 		GetDlgItem(ids[i])->SetFont(&m_fontSwapButton);
 		SetDlgItemText(ids[i], _T("\xf4"));
@@ -228,7 +252,7 @@ void COpenView::OnInitialUpdate()
 	m_constraint.LoadPosition(_T("ResizeableDialogs"), _T("OpenView"), false); // persist size via registry
 	m_constraint.UpdateSizes();
 
-	COpenDoc *pDoc = GetDocument();
+	COpenDoc* pDoc = GetDocument();
 
 	CString strTitle;
 	GetWindowText(strTitle);
@@ -265,7 +289,7 @@ void COpenView::OnInitialUpdate()
 	m_ctlPredifferPipeline.SetWindowText(m_strPredifferPipeline.c_str());
 
 	bool bDoUpdateData = true;
-	for (auto& strPath: m_strPath)
+	for (auto& strPath : m_strPath)
 	{
 		if (!strPath.empty())
 			bDoUpdateData = false;
@@ -273,15 +297,7 @@ void COpenView::OnInitialUpdate()
 	UpdateData(bDoUpdateData);
 
 	auto* pGlobalFileFilter = theApp.GetGlobalFileFilter();
-	String filterNameOrMask = pGlobalFileFilter->GetFilterNameOrMask();
-	bool bMask = pGlobalFileFilter->IsUsingMask();
-
-	if (!bMask)
-	{
-		String filterPrefix = _("[F] ");
-		filterNameOrMask = filterPrefix + filterNameOrMask;
-	}
-
+	String filterNameOrMask = pGlobalFileFilter->GetMaskOrExpression();
 	int ind = m_ctlExt.FindStringExact(0, filterNameOrMask.c_str());
 	if (ind != CB_ERR)
 		m_ctlExt.SetCurSel(ind);
@@ -291,8 +307,27 @@ void COpenView::OnInitialUpdate()
 		if (ind != CB_ERR)
 			m_ctlExt.SetCurSel(ind);
 		else
-			LogErrorString(_T("Failed to add string to filters combo list!"));
+			RootLogger::Error(_T("Failed to add string to filters combo list!"));
 	}
+
+	COMBOBOXINFO cbi{sizeof(COMBOBOXINFO)};
+	GetComboBoxInfo(m_ctlExt.m_hWnd, &cbi);
+	m_ctlExtEdit.SubclassWindow(cbi.hwndItem);
+	m_ctlExtEdit.m_validator = [this](const CString& text, CString& error) -> bool
+		{
+			FileFilterHelper fileFilterHelper;
+			fileFilterHelper.CloneFrom(theApp.GetGlobalFileFilter());
+			fileFilterHelper.SetMaskOrExpression((const tchar_t *)text);
+			const bool bError = !fileFilterHelper.GetErrorList().empty();
+			if (bError)
+			{
+				for (const auto* errorItem : fileFilterHelper.GetErrorList())
+					error += (FormatFilterErrorSummary(*errorItem) + _T("\r\n")).c_str();
+			}
+			return !bError;
+		};
+	m_ctlExtEdit.Validate();
+	m_ctlExtEdit.SetCueBanner(strutils::format_string1(_("e.g. %1"), _T("*.txt|fe:Size > 100KB")).c_str());
 
 	if (!GetOptionsMgr()->GetBool(OPT_VERIFY_OPEN_PATHS))
 	{
@@ -318,6 +353,8 @@ void COpenView::OnInitialUpdate()
 	m_bIgnoreNumbers = GetOptionsMgr()->GetBool(OPT_CMP_IGNORE_NUMBERS);
 	m_bIgnoreCodepage = GetOptionsMgr()->GetBool(OPT_CMP_IGNORE_CODEPAGE);
 	m_bFilterCommentsLines = GetOptionsMgr()->GetBool(OPT_CMP_FILTER_COMMENTLINES);
+	m_bIgnoreMissingTrailingEol = GetOptionsMgr()->GetBool(OPT_CMP_IGNORE_MISSING_TRAILING_EOL);
+	m_bIgnoreLineBreaks = GetOptionsMgr()->GetBool(OPT_CMP_IGNORE_LINE_BREAKS);
 	m_nCompareMethod = GetOptionsMgr()->GetInt(OPT_CMP_METHOD);
 
 	UpdateData(FALSE);
@@ -338,6 +375,8 @@ void COpenView::OnUpdate(CView* pSender, LPARAM lHint, CObject* pHint)
 	m_bIgnoreNumbers = GetOptionsMgr()->GetBool(OPT_CMP_IGNORE_NUMBERS);
 	m_bIgnoreCodepage = GetOptionsMgr()->GetBool(OPT_CMP_IGNORE_CODEPAGE);
 	m_bFilterCommentsLines = GetOptionsMgr()->GetBool(OPT_CMP_FILTER_COMMENTLINES);
+	m_bIgnoreMissingTrailingEol = GetOptionsMgr()->GetBool(OPT_CMP_IGNORE_MISSING_TRAILING_EOL);
+	m_bIgnoreLineBreaks = GetOptionsMgr()->GetBool(OPT_CMP_IGNORE_LINE_BREAKS);
 	m_nCompareMethod = GetOptionsMgr()->GetInt(OPT_CMP_METHOD);
 
 	UpdateData(FALSE);
@@ -367,13 +406,25 @@ void COpenView::OnPaint()
 	CRect rcImage(0, 0, size.cx * GetSystemMetrics(SM_CXSMICON) / 16, size.cy * GetSystemMetrics(SM_CYSMICON) / 16);
 	m_image.Draw(dc.m_hDC, rcImage, Gdiplus::InterpolationModeBicubic);
 	// And extend it to the Right boundary
-	dc.PatBlt(rcImage.Width(), 0, rc.Width() - rcImage.Width(), rcImage.Height(), PATCOPY);
+	if (!DarkMode::isExperimentalActive())
+		dc.PatBlt(rcImage.Width(), 0, rc.Width() - rcImage.Width(), rcImage.Height(), PATCOPY);
 
 	// Draw the resize gripper in the Lower Right corner.
 	CRect rcGrip = rc;
 	rcGrip.left = rc.right - GetSystemMetrics(SM_CXVSCROLL);
 	rcGrip.top = rc.bottom - GetSystemMetrics(SM_CYHSCROLL);
-	dc.DrawFrameControl(&rcGrip, DFC_SCROLL, DFCS_SCROLLSIZEGRIP);
+	if (IsVista_OrGreater() && m_hTheme == nullptr && IsThemeActive())
+	{
+		m_hTheme = OpenThemeData(m_hWnd, WC_SCROLLBAR);
+	}
+	if (m_hTheme != nullptr)
+	{
+		DrawThemeBackground(m_hTheme, dc.m_hDC, SBP_SIZEBOX, 0, &rcGrip, nullptr);
+	}
+	else
+	{
+		dc.DrawFrameControl(&rcGrip, DFC_SCROLL, DFCS_SCROLLSIZEGRIP);
+	}
 
 	// Draw a line to separate the Status Line
 	CPen newPen(PS_SOLID, 1, RGB(208, 208, 208));	// a very light gray
@@ -387,6 +438,47 @@ void COpenView::OnPaint()
 	dc.SelectObject(oldpen);
 
 	__super::OnPaint();
+}
+
+LRESULT COpenView::OnThemeChanged()
+{
+	if (m_hTheme != nullptr)
+	{
+		CloseThemeData(m_hTheme);
+		m_hTheme = nullptr;
+	}
+	if (m_hTheme == nullptr && IsThemeActive())
+	{
+		m_hTheme = OpenThemeData(m_hWnd, WC_SCROLLBAR);
+	}
+	return 0;
+}
+
+void COpenView::OnSettingChange(UINT uFlags, LPCTSTR lpszSection)
+{
+	if (WinMergeDarkMode::IsImmersiveColorSet(lpszSection))
+	{
+		m_image.Destroy();
+		if (!LoadImageFromResource(m_image, MAKEINTRESOURCE(IDR_LOGO), _T("IMAGE")))
+		{
+			// FIXME: LoadImageFromResource() seems to fail when running on Wine 5.0.
+			m_image.Create(1, 1, 24, 0);
+		}
+
+		if (HWND hSelf = GetSafeHwnd())
+		{
+			DarkMode::setWindowCtlColorSubclass(hSelf);
+			DarkMode::setChildCtrlsSubclassAndThemeEx(hSelf, true, true);
+		}
+
+		if (DarkMode::isExperimentalActive())
+		{
+			WinMergeDarkMode::InvertLightness(m_image);
+		}
+
+		RedrawWindow(nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ERASE | RDW_ALLCHILDREN);
+	}
+	__super::OnSettingChange(uFlags, lpszSection);
 }
 
 void COpenView::OnLButtonUp(UINT nFlags, CPoint point)
@@ -500,14 +592,17 @@ void COpenView::OnWindowPosChanged(WINDOWPOS* lpwndpos)
 		if (pFrameWnd == GetTopLevelFrame()->GetActiveFrame())
 		{
 			m_constraint.Persist(true, false);
-			WINDOWPLACEMENT wp = { sizeof wp };
-			pFrameWnd->GetWindowPlacement(&wp);
-			CRect rc;
-			GetWindowRect(&rc);
-			pFrameWnd->CalcWindowRect(&rc, CWnd::adjustOutside);
-			wp.rcNormalPosition.right = wp.rcNormalPosition.left + rc.Width();
-			wp.rcNormalPosition.bottom = wp.rcNormalPosition.top + rc.Height();
-			pFrameWnd->SetWindowPlacement(&wp);
+			if (!pFrameWnd->IsZoomed())
+			{
+				WINDOWPLACEMENT wp = { sizeof wp };
+				pFrameWnd->GetWindowPlacement(&wp);
+				CRect rc;
+				GetWindowRect(&rc);
+				pFrameWnd->CalcWindowRect(&rc, CWnd::adjustOutside);
+				wp.rcNormalPosition.right = wp.rcNormalPosition.left + rc.Width();
+				wp.rcNormalPosition.bottom = wp.rcNormalPosition.top + rc.Height();
+				pFrameWnd->SetWindowPlacement(&wp);
+			}
 		}
 	}
 	__super::OnWindowPosChanged(lpwndpos);
@@ -517,6 +612,12 @@ void COpenView::OnDestroy()
 {
 	if (m_pDropHandler != nullptr)
 		RevokeDragDrop(m_hWnd);
+
+	if (m_hTheme != nullptr)
+	{
+		CloseThemeData(m_hTheme);
+		m_hTheme = nullptr;
+	}
 
 	__super::OnDestroy();
 }
@@ -639,9 +740,10 @@ void COpenView::OnCompare(UINT nID)
 		pathsType = paths::GetPairComparability(m_files, IsArchiveFile);
 
 		if (pathsType == paths::DOES_NOT_EXIST &&
-			!std::any_of(m_files.begin(), m_files.end(), [](const auto& path) { return paths::IsURL(path); }))
+			!std::any_of(m_files.begin(), m_files.end(), 
+				[](const auto& path) { return paths::IsURL(path) || paths::IsNullDeviceName(path); }))
 		{
-			LangMessageBox(IDS_ERROR_INCOMPARABLE, MB_ICONSTOP);
+			I18n::MessageBox(IDS_ERROR_INCOMPARABLE, MB_ICONSTOP);
 			return;
 		}
 	}
@@ -675,22 +777,14 @@ void COpenView::OnCompare(UINT nID)
 	{
 		// Remove prefix + space
 		filter.erase(0, filterPrefix.length());
-		if (!pGlobalFileFilter->SetFilter(filter))
-		{
-			// If filtername is not found use default *.* mask
-			pGlobalFileFilter->SetFilter(_T("*.*"));
-			filter = _T("*.*");
-		}
-		GetOptionsMgr()->SaveOption(OPT_FILEFILTER_CURRENT, filter);
 	}
-	else
-	{
-		bool bFilterSet = pGlobalFileFilter->SetFilter(filter);
-		if (!bFilterSet)
-			m_strExt = pGlobalFileFilter->GetFilterNameOrMask();
-		GetOptionsMgr()->SaveOption(OPT_FILEFILTER_CURRENT, filter);
-	}
+	if (filter.empty())
+		filter = _T("*.*");
+	pGlobalFileFilter->SetMaskOrExpression(filter);
+	GetOptionsMgr()->SaveOption(OPT_FILEFILTER_CURRENT, filter);
 
+	m_strExt = filter;
+	SetDlgItemText(IDC_EXT_COMBO, m_strExt.c_str());
 	SaveComboboxStates();
 	GetOptionsMgr()->SaveOption(OPT_CMP_INCLUDE_SUBDIRS, m_bRecurse);
 	LoadComboboxStates();
@@ -812,7 +906,7 @@ void COpenView::OnLoadProject()
 		return;
 
 	ProjectFile project;
-	if (!theApp.LoadProjectFile(fileName, project))
+	if (!CMergeApp::LoadProjectFile(fileName, project))
 		return;
 	if (project.Items().size() == 0)
 		return;
@@ -873,6 +967,10 @@ void COpenView::OnLoadProject()
 			m_bIgnoreNumbers = projItem.GetIgnoreNumbers();
 		if (projItem.HasIgnoreCodepage())
 			m_bIgnoreCodepage = projItem.GetIgnoreCodepage();
+		if (projItem.HasIgnoreMissingTrailingEol())
+			m_bIgnoreMissingTrailingEol = projItem.GetIgnoreMissingTrailingEol();
+		if (projItem.HasIgnoreLineBreaks())
+			m_bIgnoreLineBreaks = projItem.GetIgnoreLineBreaks();
 		if (projItem.HasFilterCommentsLines())
 			m_bFilterCommentsLines = projItem.GetFilterCommentsLines();
 		if (projItem.HasCompareMethod())
@@ -885,7 +983,7 @@ void COpenView::OnLoadProject()
 	}
 	UpdateData(FALSE);
 	UpdateButtonStates();
-	LangMessageBox(IDS_PROJFILE_LOAD_SUCCESS, MB_ICONINFORMATION);
+	I18n::MessageBox(IDS_PROJFILE_LOAD_SUCCESS, MB_ICONINFORMATION);
 }
 
 /** 
@@ -918,6 +1016,8 @@ void COpenView::OnSaveProject()
 	projItem.SetSaveIgnoreEol(bSaveCompareOptions);
 	projItem.SetSaveIgnoreNumbers(bSaveCompareOptions);
 	projItem.SetSaveIgnoreCodepage(bSaveCompareOptions);
+	projItem.SetSaveIgnoreMissingTrailingEol(bSaveCompareOptions);
+	projItem.SetSaveIgnoreBreakLines(bSaveCompareOptions);
 	projItem.SetSaveFilterCommentsLines(bSaveCompareOptions);
 	projItem.SetSaveCompareMethod(bSaveCompareOptions);
 	projItem.SetSaveHiddenItems(bSaveHiddenItems);
@@ -947,7 +1047,7 @@ void COpenView::OnSaveProject()
 	if (bSaveFileFilter && !m_strExt.empty())
 	{
 		// Remove possbile prefix from the filter name
-		String prefix = _("[F] ");
+		String prefix = _T("[F] ");
 		String strExt = m_strExt;
 		size_t ind = strExt.find(prefix, 0);
 		if (ind == 0)
@@ -983,6 +1083,8 @@ void COpenView::OnSaveProject()
 		projItem.SetIgnoreEol(m_bIgnoreEol);
 		projItem.SetIgnoreNumbers(m_bIgnoreNumbers);
 		projItem.SetIgnoreCodepage(m_bIgnoreCodepage);
+		projItem.SetIgnoreMissingTrailingEol(m_bIgnoreMissingTrailingEol);
+		projItem.SetIgnoreLineBreaks(m_bIgnoreLineBreaks);
 		projItem.SetFilterCommentsLines(m_bFilterCommentsLines);
 		projItem.SetCompareMethod(m_nCompareMethod);
 	}
@@ -992,10 +1094,10 @@ void COpenView::OnSaveProject()
 
 	project.Items().push_back(projItem);
 
-	if (!theApp.SaveProjectFile(fileName, project))
+	if (!CMergeApp::SaveProjectFile(fileName, project))
 		return;
 
-	LangMessageBox(IDS_PROJFILE_SAVE_SUCCESS, MB_ICONINFORMATION);
+	I18n::MessageBox(IDS_PROJFILE_SAVE_SUCCESS, MB_ICONINFORMATION);
 }
 
 void COpenView::DropDown(NMHDR* pNMHDR, LRESULT* pResult, UINT nID, UINT nPopupID)
@@ -1004,7 +1106,7 @@ void COpenView::DropDown(NMHDR* pNMHDR, LRESULT* pResult, UINT nID, UINT nPopupI
 	GetDlgItem(nID)->GetWindowRect(&rcButton);
 	BCMenu menu;
 	VERIFY(menu.LoadMenu(nPopupID));
-	theApp.TranslateMenu(menu.m_hMenu);
+	I18n::TranslateMenu(menu.m_hMenu);
 	CMenu* pPopup = menu.GetSubMenu(0);
 	if (pPopup != nullptr)
 	{
@@ -1027,6 +1129,20 @@ template<UINT id, UINT popupid>
 void COpenView::OnDropDown(NMHDR *pNMHDR, LRESULT *pResult)
 {
 	DropDown(pNMHDR, pResult, id, popupid);
+}
+
+void COpenView::OnSelectFilterDropDown(NMHDR *pNMHDR, LRESULT *pResult)
+{
+	UpdateData(TRUE);
+	CRect rc;
+	GetDlgItem(IDC_SELECT_FILTER)->GetWindowRect(&rc);
+	const std::optional<String> filter = m_menu.ShowMenu(m_strExt, rc.left, rc.bottom, this);
+	if (filter.has_value())
+	{
+		m_strExt = *filter;
+		UpdateData(FALSE);
+		m_ctlExtEdit.OnEnChange();
+	}
 }
 
 /** 
@@ -1080,20 +1196,21 @@ void COpenView::SaveComboboxStates()
 
 struct UpdateButtonStatesThreadParams
 {
-	HWND m_hWnd;
+	HWND m_hWnd = nullptr;
 	PathContext m_paths;
 };
 
 static UINT UpdateButtonStatesThread(LPVOID lpParam)
 {
+	if (FAILED(CoInitialize(nullptr)))
+		return 0;
+
+	{
+	CAssureScriptsForThread scriptsForRescan(new MergeAppCOMClass());
 	MSG msg;
 	BOOL bRet;
-
-	CoInitialize(nullptr);
-	CAssureScriptsForThread scriptsForRescan(new MergeAppCOMClass());
-
 	while( (bRet = GetMessage( &msg, nullptr, 0, 0 )) != 0)
-	{ 
+	{
 		if (bRet == -1)
 			break;
 		if (msg.message != WM_USER + 2)
@@ -1102,6 +1219,7 @@ static UINT UpdateButtonStatesThread(LPVOID lpParam)
 		bool bIsaFolderCompare = true;
 		bool bIsaFileCompare = true;
 		bool bInvalid[3] = {false, false, false};
+		bool bIsArchiveFile[3] = {false, false, false};
 		paths::PATH_EXISTENCE pathType[3] = {paths::DOES_NOT_EXIST, paths::DOES_NOT_EXIST, paths::DOES_NOT_EXIST};
 		int iStatusMsgId = IDS_OPEN_FILESDIRS;
 
@@ -1121,13 +1239,19 @@ static UINT UpdateButtonStatesThread(LPVOID lpParam)
 		{
 			for (int i = 0; i < paths.GetSize(); ++i)
 			{
-				pathType[i] = paths::DoesPathExist(paths[i], IsArchiveFile);
+				pathType[i] = paths::DoesPathExist(paths[i]);
+				bIsArchiveFile[i] = IsArchiveFile(paths[i]);
 				if (pathType[i] == paths::DOES_NOT_EXIST)
 				{
-					if (paths::IsURL(paths[i]))
+					if (paths::IsURL(paths[i]) || paths::IsNullDeviceName(paths[i]))
 						pathType[i] = paths::IS_EXISTING_FILE;
 					else
-						bInvalid[i] = true;
+					{
+						if (bIsArchiveFile[i])
+							pathType[i] = paths::IS_EXISTING_FILE;
+						else
+							bInvalid[i] = true;
+					}
 				}
 			}
 		}
@@ -1153,7 +1277,13 @@ static UINT UpdateButtonStatesThread(LPVOID lpParam)
 				else if (!bInvalid[0] && !bInvalid[1])
 				{
 					if (pathType[0] != pathType[1])
-						iStatusMsgId = IDS_OPEN_MISMATCH;
+					{
+						if ((pathType[0] == paths::IS_EXISTING_DIR && bIsArchiveFile[1]) ||
+						    (pathType[1] == paths::IS_EXISTING_DIR && bIsArchiveFile[0]))
+							iStatusMsgId = IDS_OPEN_FILESDIRS;
+						else
+							iStatusMsgId = IDS_OPEN_MISMATCH;
+					}
 					else
 						iStatusMsgId = IDS_OPEN_FILESDIRS;
 				}
@@ -1177,20 +1307,39 @@ static UINT UpdateButtonStatesThread(LPVOID lpParam)
 				else if (!bInvalid[0] && !bInvalid[1] && !bInvalid[2])
 				{
 					if (pathType[0] != pathType[1] || pathType[0] != pathType[2])
-						iStatusMsgId = IDS_OPEN_MISMATCH;
+					{
+						bool bMatch = [&]() {
+							for (int i = 0; i < 3; ++i)
+							{
+								if (pathType[i] != paths::IS_EXISTING_DIR && !bIsArchiveFile[i])
+									return false;
+							}
+							return true;
+						}();
+						if (bMatch)
+							iStatusMsgId = IDS_OPEN_FILESDIRS;
+						else
+							iStatusMsgId = IDS_OPEN_MISMATCH;
+					}
 					else
 						iStatusMsgId = IDS_OPEN_FILESDIRS;
 				}
 			}
-			if (iStatusMsgId != IDS_OPEN_FILESDIRS)
-				pathsType = paths::DOES_NOT_EXIST;
-			bIsaFileCompare = (pathsType == paths::IS_EXISTING_FILE);
-			bIsaFolderCompare = (pathsType == paths::IS_EXISTING_DIR);
+			bIsaFileCompare = false;
+			bIsaFolderCompare = false;
+			for (int i = 0; i < paths.GetSize(); i++)
+			{
+				if (pathType[i] == paths::IS_EXISTING_FILE)
+					bIsaFileCompare = true;
+				if (pathType[i] == paths::IS_EXISTING_DIR || bIsArchiveFile[i])
+					bIsaFolderCompare = true;
+			}
 			// Both will be `false` if incompatibilities or something is missing
 			// Both will end up `true` if file validity isn't being checked
 		}
 
 		PostMessage(hWnd, WM_USER + 1, MAKEWPARAM(bIsaFolderCompare, bIsaFileCompare), MAKELPARAM(iStatusMsgId, bProject)); 
+	}
 	}
 
 	CoUninitialize();
@@ -1240,11 +1389,9 @@ void COpenView::TerminateThreadIfRunning()
 	PostThreadMessage(m_pUpdateButtonStatusThread->m_nThreadID, WM_QUIT, 0, 0);
 	DWORD dwResult = WaitForSingleObject(m_pUpdateButtonStatusThread->m_hThread, 100);
 	if (dwResult != WAIT_OBJECT_0)
-	{
-		m_pUpdateButtonStatusThread->SuspendThread();
-		TerminateThread(m_pUpdateButtonStatusThread->m_hThread, 0);
-	}
-	delete m_pUpdateButtonStatusThread;
+		theApp.AddZombieThread(m_pUpdateButtonStatusThread);
+	else
+		delete m_pUpdateButtonStatusThread;
 	m_pUpdateButtonStatusThread = nullptr;
 }
 
@@ -1383,13 +1530,13 @@ LRESULT COpenView::OnUpdateStatus(WPARAM wParam, LPARAM lParam)
 	{
 		for (auto nID : { IDC_FILES_DIRS_GROUP5, IDC_PREDIFFER_COMBO, IDC_SELECT_PREDIFFER })
 		{
-			GetDlgItem(nID)->ShowWindow(bIsaFileCompare ? SW_SHOW : SW_HIDE);
+			ShowDlgItem(nID, (bIsaFileCompare && !bIsaFolderCompare));
 			EnableDlgItem(nID, bIsaFileCompare);
 		}
 
 		for (auto nID : { IDC_FILES_DIRS_GROUP3, IDC_EXT_COMBO, IDC_SELECT_FILTER, IDC_RECURS_CHECK })
 		{
-			GetDlgItem(nID)->ShowWindow((bIsaFolderCompare || !bIsaFileCompare) ? SW_SHOW : SW_HIDE);
+			ShowDlgItem(nID, (bIsaFolderCompare || !bIsaFileCompare));
 			EnableDlgItem(nID, bIsaFolderCompare);
 		}
 	}
@@ -1418,8 +1565,13 @@ LRESULT COpenView::OnUpdateStatus(WPARAM wParam, LPARAM lParam)
  */
 void COpenView::SetStatus(UINT msgID)
 {
-	String msg = theApp.LoadString(msgID);
+	String msg = I18n::LoadString(msgID);
 	SetDlgItemText(IDC_OPEN_STATUS, msg);
+}
+
+void COpenView::OnExtEditChange()
+{
+	m_ctlExtEdit.OnEnChange();
 }
 
 /** 
@@ -1430,26 +1582,18 @@ void COpenView::OnSelectFilter()
 	String curFilter;
 	auto* pGlobalFileFilter = theApp.GetGlobalFileFilter();
 
-	const bool bUseMask = pGlobalFileFilter->IsUsingMask();
 	GetDlgItemText(IDC_EXT_COMBO, curFilter);
 	curFilter = strutils::trim_ws(curFilter);
 
+
 	GetMainFrame()->SelectFilter();
 	
-	String filterNameOrMask = pGlobalFileFilter->GetFilterNameOrMask();
-	if (pGlobalFileFilter->IsUsingMask())
+	String filterNameOrMask = pGlobalFileFilter->GetMaskOrExpression();
+	// If we had filter chosen and now has mask we can overwrite filter
+	if (curFilter != filterNameOrMask)
 	{
-		// If we had filter chosen and now has mask we can overwrite filter
-		if (!bUseMask || curFilter[0] != '*')
-		{
-			SetDlgItemText(IDC_EXT_COMBO, filterNameOrMask);
-		}
-	}
-	else
-	{
-		String filterPrefix = _("[F] ");
-		filterNameOrMask = filterPrefix + filterNameOrMask;
 		SetDlgItemText(IDC_EXT_COMBO, filterNameOrMask);
+		m_ctlExtEdit.OnEnChange();
 	}
 }
 
@@ -1581,12 +1725,46 @@ void COpenView::OnUpdateDiffIgnoreComments(CCmdUI* pCmdUI)
 }
 
 /**
+ * @brief Toggle "Ignore missing trailing EOL" setting.
+ */
+void COpenView::OnDiffIgnoreMissingTrailingEol()
+{
+	m_bIgnoreMissingTrailingEol = !m_bIgnoreMissingTrailingEol;
+}
+
+/**
+ * @brief Update "Ignore missing trailing EOL" state.
+ * @param [in] pCmdUI UI component to update.
+ */
+void COpenView::OnUpdateDiffIgnoreMissingTrailingEol(CCmdUI* pCmdUI)
+{
+	pCmdUI->SetCheck(m_bIgnoreMissingTrailingEol);
+}
+
+/**
+ * @brief Toggle "Ignore line breaks (treat as spaces)" setting.
+ */
+void COpenView::OnDiffIgnoreLineBreaks()
+{
+	m_bIgnoreLineBreaks = !m_bIgnoreLineBreaks;
+}
+
+/**
+ * @brief Update "Ignore line breaks (treat as spaces)" state.
+ * @param [in] pCmdUI UI component to update.
+ */
+void COpenView::OnUpdateDiffIgnoreLineBreaks(CCmdUI* pCmdUI)
+{
+	pCmdUI->SetCheck(m_bIgnoreLineBreaks);
+}
+
+/**
  * @brief Set "Compare method" setting.
  * @param [in] nID Menu ID of the selected item
  */
 void COpenView::OnCompareMethod(UINT nID)
 {
-	assert(nID >= ID_PROJECT_DIFF_OPTIONS_COMPMETHOD_FULL_CONTENTS && nID <= ID_PROJECT_DIFF_OPTIONS_COMPMETHOD_SIZE);
+	assert(nID >= ID_PROJECT_DIFF_OPTIONS_COMPMETHOD_FULL_CONTENTS && nID <= ID_PROJECT_DIFF_OPTIONS_COMPMETHOD_EXISTENCE);
 
 	m_nCompareMethod = nID - ID_PROJECT_DIFF_OPTIONS_COMPMETHOD_FULL_CONTENTS;
 }
@@ -1638,7 +1816,7 @@ void COpenView::OnEditAction(int msg, WPARAM wParam, LPARAM lParam)
  */
 void COpenView::OnHelp()
 {
-	theApp.ShowHelp(OpenDlgHelpLocation);
+	CMergeApp::ShowHelp(OpenDlgHelpLocation);
 }
 
 /////////////////////////////////////////////////////////////////////////////

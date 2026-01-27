@@ -10,7 +10,6 @@
 #include <vector>
 #include <memory>
 #include "MergeEditView.h"
-#include "DiffTextBuffer.h"
 #include "stringdiffs.h"
 #include "UnicodeString.h"
 #include "SubstitutionFiltersList.h"
@@ -57,7 +56,7 @@ void CMergeDoc::Showlinediff(CMergeEditView *pView, bool bReversed)
 	if (std::all_of(rc, rc + m_nBuffers, [](auto& rc) { return rc.first.y == -1; }))
 	{
 		String caption = _("Line difference");
-		String msg = _("No differences to select found");
+		String msg = _("No differences found to select");
 		MessageBox(pView->GetSafeHwnd(), msg.c_str(), caption.c_str(), MB_OK);
 		return;
 	}
@@ -106,7 +105,7 @@ void CMergeDoc::AddToSubstitutionFilters(CMergeEditView* pView, bool bReversed)
 		String str1 = SubstitutionFiltersList.GetAt(f).replacement;
 		if ( str0 == selectedText[0] && str1 == selectedText[1])
 		{
-			String caption = _("The pair is already present in the list of Substitution Filters");
+			String caption = _("The pair is already in the Substitution Filters list");
 			String msg = strutils::format(_T("\"%s\" <-> \"%s\""), selectedText[0], selectedText[1]);
 			MessageBox(pView->GetSafeHwnd(), msg.c_str(), caption.c_str(), MB_OK);
 			return; /// The substitution pair is already registered
@@ -313,26 +312,26 @@ void CMergeDoc::ClearWordDiffCache(int nDiff/* = -1 */)
 	}
 }
 
-std::vector<WordDiff> CMergeDoc::GetWordDiffArrayInDiffBlock(int nDiff)
+std::vector<WordDiff> CMergeDoc::GetWordDiffArrayInDiffBlock(int nDiff, bool ignoreDiffOptions/*=false*/)
 {
 	DIFFRANGE cd;
 	m_diffList.GetDiff(nDiff, cd);
 
 	bool diffPerLine = IsDiffPerLine(m_ptBuf[0]->GetTableEditing(), cd);
 	if (!diffPerLine)
-		return GetWordDiffArray(cd.dbegin);
+		return GetWordDiffArray(cd.dbegin, ignoreDiffOptions);
 
 	std::vector<WordDiff> worddiffs;
 	for (int nLine = cd.dbegin; nLine <= cd.dend; ++nLine)
 	{
-		std::vector<WordDiff> worddiffsPerLine = GetWordDiffArray(nLine);
+		std::vector<WordDiff> worddiffsPerLine = GetWordDiffArray(nLine, ignoreDiffOptions);
 		worddiffs.insert(worddiffs.end(), worddiffsPerLine.begin(), worddiffsPerLine.end());
 	}
 	return worddiffs;
 }
 
 std::vector<WordDiff>
-CMergeDoc::GetWordDiffArrayInRange(const int begin[3], const int end[3], int pane1/*=-1*/, int pane2/*=-1*/)
+CMergeDoc::GetWordDiffArrayInRange(const int begin[3], const int end[3], bool ignoreDiffOptions/*=false*/, int pane1/*=-1*/, int pane2/*=-1*/)
 {
 	DIFFOPTIONS diffOptions = {0};
 	m_diffWrapper.GetOptions(&diffOptions);
@@ -366,15 +365,17 @@ CMergeDoc::GetWordDiffArrayInRange(const int begin[3], const int end[3], int pan
 	}
 
 	// Options that affect comparison
-	bool casitive = !diffOptions.bIgnoreCase;
-	bool eolSensitive = !diffOptions.bIgnoreEol;
-	int xwhite = diffOptions.nIgnoreWhitespace;
+	bool casitive = ignoreDiffOptions ? false : !diffOptions.bIgnoreCase;
+	strdiff::EolCompareMode eolMode = diffOptions.bIgnoreLineBreaks ? strdiff::EOL_AS_SPACE :
+		diffOptions.bIgnoreEol ? strdiff::EOL_IGNORE : strdiff::EOL_STRICT;
+	bool eolSensitive = ignoreDiffOptions ? true : !diffOptions.bIgnoreEol;
+	int xwhite = ignoreDiffOptions ? 0 : diffOptions.nIgnoreWhitespace;
 	int breakType = GetBreakType(); // whitespace only or include punctuation
 	bool byteColoring = GetByteColoringOption();
 
 	// Make the call to stringdiffs, which does all the hard & tedious computations
 	std::vector<strdiff::wdiff> wdiffs =
-		strdiff::ComputeWordDiffs(static_cast<int>(panes.size()), str, casitive, eolSensitive, xwhite, diffOptions.bIgnoreNumbers, breakType, byteColoring);
+		strdiff::ComputeWordDiffs(static_cast<int>(panes.size()), str, casitive, eolMode, xwhite, diffOptions.bIgnoreNumbers, breakType, byteColoring);
 
 	std::vector<strdiff::wdiff>::iterator it;
 	for (it = wdiffs.begin(); it != wdiffs.end(); ++it)
@@ -393,16 +394,18 @@ CMergeDoc::GetWordDiffArrayInRange(const int begin[3], const int end[3], int pan
 			}
 			wd.beginline[i] = nLine;
 			wd.begin[i] = it->begin[i] - nOffsets[file][nLine-nLineBegin];
-			if (m_ptBuf[file]->GetLineLength(nLine) < wd.begin[i])
+			const int nLineCount = m_ptBuf[file]->GetLineCount();
+			const int nLineLength1 = nLine < nLineCount ? m_ptBuf[file]->GetLineLength(nLine) : 0;
+			if (nLineLength1 < wd.begin[i])
 			{
-				if (wd.beginline[i] < m_ptBuf[file]->GetLineCount() - 1)
+				if (wd.beginline[i] < nLineCount - 1)
 				{
 					wd.begin[i] = 0;
 					wd.beginline[i]++;
 				}
 				else
 				{
-					wd.begin[i] = m_ptBuf[file]->GetLineLength(nLine);
+					wd.begin[i] = nLineLength1;
 				}
 			}
 
@@ -413,16 +416,17 @@ CMergeDoc::GetWordDiffArrayInRange(const int begin[3], const int end[3], int pan
 			}
 			wd.endline[i] = nLine;
 			wd.end[i] = it->end[i]  + 1 - nOffsets[file][nLine-nLineBegin];
-			if (m_ptBuf[file]->GetLineLength(nLine) < wd.end[i])
+			const int nLineLength2 = nLine < nLineCount ? m_ptBuf[file]->GetLineLength(nLine) : 0;
+			if (nLineLength2 < wd.end[i])
 			{
-				if (wd.endline[i] < m_ptBuf[file]->GetLineCount() - 1)
+				if (wd.endline[i] < nLineCount - 1)
 				{
 					wd.end[i] = 0;
 					wd.endline[i]++;
 				}
 				else
 				{
-					wd.end[i] = m_ptBuf[file]->GetLineLength(nLine);
+					wd.end[i] = nLineLength2;
 				}
 			}
 		}
@@ -438,7 +442,7 @@ CMergeDoc::GetWordDiffArrayInRange(const int begin[3], const int end[3], int pan
  * This is used by algorithm for line diff coloring
  * (Line diff coloring is distinct from the selection highlight code)
  */
-std::vector<WordDiff> CMergeDoc::GetWordDiffArray(int nLineIndex)
+std::vector<WordDiff> CMergeDoc::GetWordDiffArray(int nLineIndex, bool ignoreDiffOptions/*=false*/)
 {
 	int file;
 	DIFFRANGE cd;
@@ -453,12 +457,15 @@ std::vector<WordDiff> CMergeDoc::GetWordDiffArray(int nLineIndex)
 	int nDiff = m_diffList.LineToDiff(nLineIndex);
 	if (nDiff == -1)
 		return worddiffs;
-	std::map<int, std::vector<WordDiff> >::iterator itmap = m_cacheWordDiffs.find(nDiff);
-	if (itmap != m_cacheWordDiffs.end())
+	if (!ignoreDiffOptions)
 	{
-		worddiffs.resize((*itmap).second.size());
-		std::copy((*itmap).second.begin(), (*itmap).second.end(), worddiffs.begin());
-		return worddiffs;
+		std::map<int, std::vector<WordDiff> >::iterator itmap = m_cacheWordDiffs.find(nDiff);
+		if (itmap != m_cacheWordDiffs.end())
+		{
+			worddiffs.resize((*itmap).second.size());
+			std::copy((*itmap).second.begin(), (*itmap).second.end(), worddiffs.begin());
+			return worddiffs;
+		}
 	}
 
 	m_diffList.GetDiff(nDiff, cd);
@@ -482,9 +489,9 @@ std::vector<WordDiff> CMergeDoc::GetWordDiffArray(int nLineIndex)
 		}
 	}
 
-	worddiffs = GetWordDiffArrayInRange(nLineBegin, nLineEnd);
+	worddiffs = GetWordDiffArrayInRange(nLineBegin, nLineEnd, ignoreDiffOptions);
 
-	if (!diffPerLine)
+	if (!diffPerLine && !ignoreDiffOptions)
 	{
 		m_cacheWordDiffs[nDiff].resize(worddiffs.size());
 		std::copy(worddiffs.begin(), worddiffs.end(), m_cacheWordDiffs[nDiff].begin());

@@ -1,11 +1,12 @@
 #include "pch.h"
 #include <iostream>
+#include <Windows.h>
 #include "UnicodeString.h"
 #include "unicoder.h"
 #include "OptionsMgr.h"
 #include "RegOptionsMgr.h"
 
-CRegOptionsMgr m_optionsMgr;
+CRegOptionsMgr m_optionsMgr(_T("Thingamahoochie\\WinMerge\\"));
 
 COptionsMgr * GetOptionsMgr()
 {
@@ -37,36 +38,30 @@ String GetSysError(int nerr /* =-1 */)
 	return str;
 }
 
-String LoadResString(unsigned id)
-{
-	return _T("Nothing");
-}
-
-void LogErrorStringUTF8(const std::string& sz)
-{
-	std::cout << sz;
-}
-
-void LogErrorString(const String& sz)
-{
-	std::cout << ucr::toUTF8(sz);
-}
-
 void AppErrorMessageBox(const String& msg)
 {
 	MessageBox(NULL, msg.c_str(), NULL, MB_ICONSTOP);
 }
 
-String tr(const std::string& str)
-{
-	return ucr::toTString(str);
-}
-
-String tr(const std::wstring& str)
-{
-	return ucr::toTString(str);
-}
-
 void NTAPI LangTranslateDialog(HWND h)
 {
 }
+
+void* AppGetMainHWND()
+{
+	return nullptr;
+}
+
+namespace I18n
+{
+	String tr(const std::string& str)
+	{
+		return ucr::toTString(str);
+	}
+	
+	String tr(const std::wstring& str)
+	{
+		return ucr::toTString(str);
+	}
+}
+

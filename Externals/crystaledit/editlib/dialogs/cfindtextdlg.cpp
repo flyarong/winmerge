@@ -30,6 +30,8 @@
 #include "DDXHelper.h"
 #include "../ccrystaltextview.h"
 
+#include "darkmodelib.h"
+
 #ifdef _DEBUG
 #define new DEBUG_NEW
 #endif
@@ -169,7 +171,20 @@ OnInitDialog ()
   CDialog::OnInitDialog ();
 
   CMemComboBox::LoadSettings();
-  
+
+  LOGFONT lf{}, lfOld{};
+  CFont *pOldFont = m_ctlFindText.GetFont ();
+  if (pOldFont)
+    {
+      pOldFont->GetLogFont (&lfOld);
+      m_pBuddy->GetFont (lf);
+      lf.lfHeight = lfOld.lfHeight;
+      m_font.CreateFontIndirect (&lf);
+      m_ctlFindText.SetFont (&m_font);
+    }
+#if defined(USE_DARKMODELIB)
+  DarkMode::setDarkWndSafe(GetSafeHwnd(), true);
+#endif
   return true;
 }
 
@@ -242,7 +257,3 @@ UseLastSearch ()
   m_bNoClose = lastSearch.m_bNoClose;
 }
 
-void CFindTextDlg::PostNcDestroy()
-{
-  delete this;
-}

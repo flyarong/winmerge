@@ -37,6 +37,8 @@
 
 #include "DDXHelper.h"
 
+#include "darkmodelib.h"
+
 #ifdef _DEBUG
 #define new DEBUG_NEW
 #endif
@@ -60,6 +62,7 @@ CEditReplaceDlg::CEditReplaceDlg (CCrystalEditView * pBuddy)
 , m_nDirection(1)
 , m_bEnableScopeSelection(true)
 , m_bFound(false)
+, m_bReplaced(false)
 , lastSearch({0})
 {
   ASSERT (pBuddy != nullptr);
@@ -135,6 +138,7 @@ void CEditReplaceDlg::OnChangeEditText ()
 {
   UpdateData();
   UpdateControls();
+  m_bFound = false;
 }
 void CEditReplaceDlg::OnChangeSelected ()
 {
@@ -145,6 +149,7 @@ void CEditReplaceDlg::OnChangeSelected ()
     m_ctlFindText.SetWindowText(m_sText);
   }
   UpdateControls();
+  m_bFound = false;
 }
 
 void CEditReplaceDlg::
@@ -153,6 +158,13 @@ OnCancel ()
   VERIFY (UpdateData ());
   CDialog::OnCancel ();
   m_pBuddy->SetFocus();
+  if (m_bReplaced)
+    {
+      //  Restore selection
+      if (m_pBuddy->m_bSelectionPushed)
+        m_pBuddy->SetSelection(m_pBuddy->m_ptSavedSelStart, m_pBuddy->m_ptSavedSelEnd);
+    }
+  m_pBuddy->m_bSelectionPushed = false;
 }
 
 BOOL CEditReplaceDlg::
@@ -160,6 +172,18 @@ OnInitDialog ()
 {
   LangTranslateDialog(m_hWnd);
   CDialog::OnInitDialog ();
+
+  LOGFONT lf{}, lfOld{};
+  CFont *pOldFont = m_ctlFindText.GetFont ();
+  if (pOldFont)
+    {
+      pOldFont->GetLogFont (&lfOld);
+      m_pBuddy->GetFont (lf);
+      lf.lfHeight = lfOld.lfHeight;
+      m_font.CreateFontIndirect (&lf);
+      m_ctlFindText.SetFont (&m_font);
+      m_ctlReplText.SetFont (&m_font);
+    }
 
   CMemComboBox::LoadSettings();
   m_ctlReplText.m_sGroup = _T ("ReplaceText");
@@ -171,7 +195,9 @@ OnInitDialog ()
 
   GetDlgItem (IDC_EDIT_SCOPE_SELECTION)->EnableWindow (m_bEnableScopeSelection);
   m_bFound = false;
-
+#if defined(USE_DARKMODELIB)
+  DarkMode::setDarkWndSafe(GetSafeHwnd(), true);
+#endif
   return true;
 }
 
@@ -417,7 +443,7 @@ OnEditReplace ()
     }
   m_bFound = DoHighlightText ( true );
 
-  m_pBuddy->SaveLastSearch(&lastSearch);
+  m_bReplaced = true;
 }
 
 void CEditReplaceDlg::
@@ -521,7 +547,7 @@ OnEditReplaceAll ()
 
   AfxMessageBox( strMessage, MB_ICONINFORMATION|MB_DONT_DISPLAY_AGAIN, IDS_NUM_REPLACED);
 
-  m_pBuddy->SaveLastSearch(&lastSearch);
+  m_bReplaced = true;
 }
 
 void CEditReplaceDlg::
@@ -563,6 +589,7 @@ void CEditReplaceDlg::
 UpdateLastSearch ()
 {
   SetLastSearch (m_sText, m_bMatchCase, m_bWholeWord, m_bRegExp, m_nScope, m_nDirection);
+  m_pBuddy->SaveLastSearch(&lastSearch);
 }
 
 void CEditReplaceDlg::

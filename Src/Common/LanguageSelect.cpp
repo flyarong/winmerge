@@ -190,7 +190,7 @@ const struct LangFileInfo::rg LangFileInfo::rg[] =
 		LANG_GUJARATI,		"GUJARATI\0"
 	},
 	{
-		LANG_HEBREW,		"HEBREW\0"
+		LANG_HEBREW,		"HEBREW\0"						"ISRAEL\0"
 	},
 	{
 		LANG_HINDI,			"HINDI\0"
@@ -335,7 +335,8 @@ const struct LangFileInfo::rg LangFileInfo::rg[] =
 		LANG_SYRIAC,		"SYRIAC\0"
 	},
 	{
-		LANG_TAMIL,			"TAMIL\0"
+		LANG_TAMIL,			"TAMIL\0"						"INDIA\0"
+															"SRI_LANKA\0"
 	},
 	{
 		LANG_TATAR,			"TATAR\0"
@@ -769,7 +770,7 @@ void CLanguageSelect::SetIndicators(CStatusBar &sb, const UINT *rgid, int n) con
 		style = 0;
 	}
 	if (hf != nullptr)
-		hf = dc.SelectObject(hf);
+		dc.SelectObject(hf);
 	// Send WM_SIZE to get pane rectangles right
 	RECT rect;
 	sb.GetClientRect(&rect);
@@ -778,6 +779,7 @@ void CLanguageSelect::SetIndicators(CStatusBar &sb, const UINT *rgid, int n) con
 
 void CLanguageSelect::TranslateMenu(HMENU h) const
 {
+	BCMenu* pBCMenu = dynamic_cast<BCMenu*>(CMenu::FromHandle(h));
 	int i = ::GetMenuItemCount(h);
 	while (i > 0)
 	{
@@ -795,7 +797,8 @@ void CLanguageSelect::TranslateMenu(HMENU h) const
 			TranslateMenu(mii.hSubMenu);
 			mii.wID = static_cast<UINT>(reinterpret_cast<uintptr_t>(mii.hSubMenu));
 		}
-		if (BCMenuData *pItemData = reinterpret_cast<BCMenuData *>(mii.dwItemData))
+		BCMenuData *pItemData = reinterpret_cast<BCMenuData *>(mii.dwItemData);
+		if (pItemData)
 		{
 			if (LPCWSTR text = pItemData->GetWideString())
 			{
@@ -809,7 +812,11 @@ void CLanguageSelect::TranslateMenu(HMENU h) const
 		{
 			std::wstring s;
 			if (TranslateString(text, s))
+			{
+				if (pBCMenu && !pItemData)
+					pBCMenu->SetMenuText(i, s.c_str(), MF_BYPOSITION);
 				::ModifyMenuW(h, i, mii.fState | MF_BYPOSITION, mii.wID, s.c_str());
+			}
 		}
 	}
 }

@@ -95,6 +95,7 @@ DATE:		BY:					DESCRIPTION:
 #include "paths.h"
 #include "Environment.h"
 #include "Merge7zFormatRegister.h"
+#include "Logger.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -341,6 +342,8 @@ SingleItemEnumerator::SingleItemEnumerator(const tchar_t* path, const tchar_t* F
 DirItemEnumerator::DirItemEnumerator(CDirView *pView, int nFlags)
 : m_pView(pView)
 , m_nFlags(nFlags)
+, m_nIndex(-1)
+, m_index(0)
 {
 	if (m_nFlags & Original)
 	{
@@ -411,17 +414,14 @@ const DIFFITEM &DirItemEnumerator::Next()
 		m_index++;
 	}
 	const auto& di = m_pView->GetDiffItem(m_nIndex);
-	// If the current item is a folder, ignore the current item if the next selected item is a child element of that folder.
-	if (m_index > (((di.diffcode.diffcode & DIFFCODE::THREEWAY) == 0) ? 1 : 2) || !di.diffcode.isDirectory())
-		return di;
-	const int nextIndex = pView(m_pView)->GetNextItem(m_nIndex, m_nFlags & nMask);
-	if (nextIndex == -1)
-		return di;
-	const auto& diNext = m_pView->GetDiffItem(nextIndex);
-	const String curRelPath = strutils::makelower(di.diffFileInfo[m_index].GetFile());
-	if (strutils::makelower(diNext.diffFileInfo[m_index].GetFile()).find(curRelPath) != 0)
-		return di;
-	return *DIFFITEM::GetEmptyItem();
+	for (const auto* pfdi : m_selectedFolderDiffItems)
+	{
+		if (di.IsAncestor(pfdi))
+			return *DIFFITEM::GetEmptyItem();
+	}
+	if (di.diffcode.isDirectory())
+		m_selectedFolderDiffItems.push_back(&di);
+	return di;
 }
 
 /**
@@ -603,7 +603,7 @@ void DirItemEnumerator::CompressArchive(const tchar_t* path)
 	}
 	if (path && !MultiStepCompressArchive(path))
 	{
-		LangMessageBox(IDS_UNKNOWN_ARCHIVE_FORMAT, MB_ICONEXCLAMATION);
+		I18n::MessageBox(IDS_UNKNOWN_ARCHIVE_FORMAT, MB_ICONEXCLAMATION);
 	}
 }
 
@@ -636,7 +636,7 @@ DecompressResult DecompressArchive(HWND hWnd, const PathContext& files)
 				}
 				if (res.files[0].find(path) == 0)
 				{
-					VERIFY(::DeleteFile(res.files[0].c_str()) || (LogErrorString(strutils::format(_T("DeleteFile(%s) failed"), res.files[0])), false));
+					VERIFY(::DeleteFile(res.files[0].c_str()) || (RootLogger::Error(strutils::format(_T("DeleteFile(%s) failed"), res.files[0])), false));
 				}
 				BSTR pTmp = piHandler->GetDefaultName(hWnd, res.files[0].c_str());
 				res.files[0] = ucr::toTString(pTmp);
@@ -668,7 +668,7 @@ DecompressResult DecompressArchive(HWND hWnd, const PathContext& files)
 				}
 				if (res.files[1].find(path) == 0)
 				{
-					VERIFY(::DeleteFile(res.files[1].c_str()) || (LogErrorString(strutils::format(_T("DeleteFile(%s) failed"), res.files[1])), false));
+					VERIFY(::DeleteFile(res.files[1].c_str()) || (RootLogger::Error(strutils::format(_T("DeleteFile(%s) failed"), res.files[1])), false));
 				}
 				BSTR pTmp = piHandler->GetDefaultName(hWnd, res.files[1].c_str());
 				res.files[1] = OLE2T(pTmp);
@@ -699,7 +699,7 @@ DecompressResult DecompressArchive(HWND hWnd, const PathContext& files)
 				}
 				if (res.files[2].find(path) == 0)
 				{
-					VERIFY(::DeleteFile(res.files[2].c_str()) || (LogErrorString(strutils::format(_T("DeleteFile(%s) failed"), res.files[2])), false));
+					VERIFY(::DeleteFile(res.files[2].c_str()) || (RootLogger::Error(strutils::format(_T("DeleteFile(%s) failed"), res.files[2])), false));
 				}
 				BSTR pTmp = piHandler->GetDefaultName(hWnd, res.files[2].c_str());
 				res.files[2] = OLE2T(pTmp);

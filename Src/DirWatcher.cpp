@@ -9,7 +9,7 @@
 #include "paths.h"
 #include <vector>
 #include <process.h>
-#include <Windows.h>
+#include <windows.h>
 
 struct DirEventListener
 {
@@ -324,6 +324,7 @@ unsigned DirWatcher::Impl::DirWatcherThreadProc()
 			}
 
 			handles.clear();
+			handles.reserve(watchedDirs.size() + 1);
 			handles.push_back(m_hEventReq);
 			for (auto& watchedDir : watchedDirs)
 				handles.push_back(watchedDir.pOverlapped->hEvent);

@@ -13,14 +13,13 @@
 
 #include "stdafx.h"
 #include "MergeEditFrm.h"
-#include "Merge.h"
-#include "MainFrm.h"
+#include "FrameWndHelper.h"
 #include "MergeDoc.h"
 #include "MergeEditView.h"
 #include "LocationView.h"
-#include "DiffViewBar.h"
 #include "OptionsDef.h"
 #include "OptionsMgr.h"
+#include "DarkModeLib.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -53,6 +52,7 @@ BEGIN_MESSAGE_MAP(CMergeEditFrame, CMergeFrameCommon)
 END_MESSAGE_MAP()
 
 constexpr UINT_PTR IDT_SAVEPOSITION = 2;
+constexpr UINT_PTR IDT_PREVIEWMODE = 3;
 
 /////////////////////////////////////////////////////////////////////////////
 // CMergeEditFrame construction/destruction
@@ -117,14 +117,19 @@ BOOL CMergeEditFrame::OnCreateClient( LPCREATESTRUCT /*lpcs*/,
 
 	m_wndFilePathBar.SetPaneCount(m_pMergeDoc->m_nBuffers);
 	m_wndFilePathBar.SetOnSetFocusCallback([&](int pane) {
-		m_pMergeDoc->GetView(0, pane)->SetActivePane();
+		const int nGroup = m_pMergeDoc->GetActiveMergeView()->m_nThisGroup;
+		m_pMergeDoc->GetView(nGroup, pane)->SetActivePane();
 	});
 	m_wndFilePathBar.SetOnCaptionChangedCallback([&](int pane, const String& sText) {
+		const int nGroup = m_pMergeDoc->GetActiveMergeView()->m_nThisGroup;
 		m_pMergeDoc->SetDescription(pane, sText);
 		m_pMergeDoc->UpdateHeaderPath(pane);
+		m_pMergeDoc->GetView(nGroup, pane)->SetFocus();
 	});
 	m_wndFilePathBar.SetOnFileSelectedCallback([&](int pane, const String& sFilepath) {
+		const int nGroup = m_pMergeDoc->GetActiveMergeView()->m_nThisGroup;
 		m_pMergeDoc->ChangeFile(pane, sFilepath);
+		m_pMergeDoc->GetView(nGroup, pane)->SetFocus();
 	});
 	m_wndStatusBar.SetPaneCount(m_pMergeDoc->m_nBuffers);
 	
@@ -171,7 +176,7 @@ int CMergeEditFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 
 	EnableDocking(CBRS_ALIGN_TOP|CBRS_ALIGN_BOTTOM|CBRS_ALIGN_LEFT|CBRS_ALIGN_RIGHT);
 
-	RemoveBarBorder();
+	FrameWndHelper::RemoveBarBorder(this);
 
 	// Merge frame has a header bar at top
 	if (!m_wndFilePathBar.Create(this))
@@ -211,7 +216,7 @@ int CMergeEditFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 	// load docking positions and sizes
 	CDockState pDockState;
 	pDockState.LoadState(_T("Settings"));
-	if (EnsureValidDockState(pDockState)) // checks for valid so won't ASSERT
+	if (FrameWndHelper::EnsureValidDockState(this, pDockState)) // checks for valid so won't ASSERT
 		SetDockState(pDockState);
 	// for the dimensions of the diff and location pane, use the CSizingControlBar loader
 	m_wndLocationBar.LoadState(_T("Settings"));
@@ -230,38 +235,6 @@ BOOL CMergeEditFrame::OnBarCheck(UINT nID)
 		m_pMergeDoc->ForEachView ([nDiff](auto& pView) { if (pView->m_bDetailView) pView->OnDisplayDiff(nDiff); });
 	}
 	return result;
-}
-
-/**
- * @brief We must use this function before a call to SetDockState
- *
- * @note Without this, SetDockState will assert or crash if a bar from the 
- * CDockState is missing in the current CMergeEditFrame.
- * The bars are identified with their ID. This means the missing bar bug is triggered
- * when we run WinMerge after changing the ID of a bar. 
- */
-bool CMergeEditFrame::EnsureValidDockState(CDockState& state) 
-{
-	for (int i = (int) state.m_arrBarInfo.GetSize()-1 ; i >= 0; i--) 
-	{
-		bool barIsCorrect = true;
-		CControlBarInfo* pInfo = (CControlBarInfo*)state.m_arrBarInfo[i];
-		if (pInfo == nullptr) 
-			barIsCorrect = false;
-		else
-		{
-			if (! pInfo->m_bFloating) 
-			{
-				pInfo->m_pBar = GetControlBar(pInfo->m_nBarID);
-				if (pInfo->m_pBar == nullptr) 
-					barIsCorrect = false; //toolbar id's probably changed	
-			}
-		}
-
-		if (! barIsCorrect)
-			state.m_arrBarInfo.RemoveAt(i);
-	}
-	return true;
 }
 
 void CMergeEditFrame::ActivateFrame(int nCmdShow) 
@@ -317,6 +290,13 @@ void CMergeEditFrame::OnClose()
 	CMergeFrameCommon::OnClose();
 }
 
+void CMergeEditFrame::OnSetPreviewMode(BOOL bPreview, CPrintPreviewState* pState)
+{
+	KillTimer(IDT_PREVIEWMODE);
+	SetTimer(IDT_PREVIEWMODE, 100, nullptr);
+	__super::OnSetPreviewMode(bPreview, pState);
+}
+
 /// update splitting position for panels 1/2 and headerbar and statusbar 
 void CMergeEditFrame::UpdateHeaderSizes()
 {
@@ -344,9 +324,9 @@ void CMergeEditFrame::UpdateHeaderSizes()
 			w[pane] = (w2 - 4 * pDoc->m_nBuffers) / pDoc->m_nBuffers;
 	}
 
-	if (!std::equal(m_nLastSplitPos, m_nLastSplitPos + pDoc->m_nBuffers - 1, w))
+	if (!std::equal(m_nLastSplitPos, m_nLastSplitPos + pDoc->m_nBuffers, w))
 	{
-		std::copy_n(w, pDoc->m_nBuffers - 1, m_nLastSplitPos);
+		std::copy_n(w, pDoc->m_nBuffers, m_nLastSplitPos);
 
 		// resize controls in header dialog bar
 		m_wndFilePathBar.Resize(w);
@@ -383,12 +363,49 @@ void CMergeEditFrame::OnIdleUpdateCmdUI()
 	CMergeFrameCommon::OnIdleUpdateCmdUI();
 }
 
+LRESULT CMergeEditFrame::CPreviewNumPageButton::WindowProc(UINT message, WPARAM wParam, LPARAM lParam)
+{
+	switch (message)
+	{
+	case WM_SETTEXT:
+	{
+		// Translate the One Page Button and Two Page Button on the Print Preivew toolbar.
+		String text = reinterpret_cast<TCHAR*>(lParam);
+		String translated = I18n::tr(text);
+		if (translated != text)
+		{
+			SetWindowText(translated.c_str());
+			return TRUE;
+		}
+		break;
+	}
+	case WM_DESTROY:
+		UnsubclassWindow();
+		break;
+	}
+	return __super::WindowProc(message, wParam, lParam);
+}
+
 void CMergeEditFrame::OnTimer(UINT_PTR nIDEvent) 
 {
 	if (nIDEvent == IDT_SAVEPOSITION)
 	{
 		SavePosition();
 		KillTimer(IDT_SAVEPOSITION);
+	}
+	else if (nIDEvent == IDT_PREVIEWMODE)
+	{
+		KillTimer(IDT_PREVIEWMODE);
+		CWnd* pPreviewBar = GetDlgItem(AFX_IDW_PREVIEW_BAR);
+		if (pPreviewBar)
+		{
+			pPreviewBar->Invalidate();
+			I18n::TranslateDialog(pPreviewBar->GetSafeHwnd());
+			m_wndPreviewNumPage.SubclassWindow(pPreviewBar->GetDlgItem(AFX_ID_PREVIEW_NUMPAGE)->GetSafeHwnd());
+			HWND hPreviewBar = pPreviewBar->GetSafeHwnd();
+			if (hPreviewBar != nullptr)
+				DarkMode::setChildCtrlsSubclassAndThemeEx(hPreviewBar, true, true);
+		}
 	}
 	else
 	{

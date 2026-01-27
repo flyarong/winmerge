@@ -173,7 +173,7 @@ protected:
 	// handle WM_SIZE
 	void Resize(HWND hWnd, UINT nType);
 	// handle WM_GETMINMAXINFO
-	void OnGetMinMaxInfo(MINMAXINFO FAR* lpMMI );
+	void OnGetMinMaxInfo(MINMAXINFO* lpMMI );
 	// handle WM_NCHITTEST
 	bool OnNcHitTest(UINT message, WPARAM wParam, LPARAM lParam, LRESULT * plresult);
 	// handle WM_NOTIFY/TTN_NEEDTEXT combination
@@ -216,6 +216,7 @@ private:
 	int m_nOrigX;
 	int m_nOrigY;
 	EGRIP m_nGrip;
+	HTHEME m_hTheme;
 	bool m_bOriginalFetched;
 	int m_nMinX;
 	int m_nMinY;

@@ -1,7 +1,7 @@
 cd /d "%~dp0"
 
 call SetVersion.cmd
-cscript /nologo ExpandEnvironmenStrings.vbs Version.in > Version.h
+cscript /nologo ExpandEnvironmenStrings.js Version.in > Version.h
 
 setlocal
 for /f "usebackq tokens=*" %%i in (`"%programfiles(x86)%\microsoft visual studio\installer\vswhere.exe" -version [17.0^,18.0^) -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
@@ -12,7 +12,6 @@ if exist "%InstallDir%\Common7\Tools\vsdevcmd.bat" (
 )
 
 if "%1" == "" (
-  call :BuildBin ARM || goto :eof
   call :BuildBin ARM64 || goto :eof
   call :BuildBin x86|| goto :eof
   call :BuildBin x64 || goto :eof
@@ -23,7 +22,7 @@ if "%1" == "" (
 goto :eof
 
 :BuildBin
-MSBuild WinMerge.vs2022.sln /t:Rebuild /p:Configuration="Release" /p:Platform="%1" || goto :eof
+MSBuild WinMerge.sln /t:Rebuild /p:Configuration="Release" /p:Platform="%1" || goto :eof
 endlocal
 
 if exist "%SIGNBAT_PATH%" (

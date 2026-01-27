@@ -16,6 +16,8 @@
 #include "Win_VersionHelper.h"
 #include "MergeCmdLineInfo.h"
 #include "JumpList.h"
+#include "SuperComboBox.h"
+#include "Logger.h"
 #include "Merge.h"
 
 #ifdef _DEBUG
@@ -54,19 +56,32 @@ static bool IsShellExtensionRegistered(bool peruser)
 
 static bool IsWinMergeContextMenuRegistered()
 {
-	HKEY hKey;
 #ifdef _WIN64
-	DWORD ulOptions = KEY_QUERY_VALUE;
+	DWORD ulOptions = KEY_READ;
 #else
 	auto Is64BitWindows = []() { BOOL f64 = FALSE; return IsWow64Process(GetCurrentProcess(), &f64) && f64; };
-	DWORD ulOptions = KEY_QUERY_VALUE | (Is64BitWindows() ? KEY_WOW64_64KEY : 0);
+	DWORD ulOptions = KEY_READ | (Is64BitWindows() ? KEY_WOW64_64KEY : 0);
 #endif
-	if (ERROR_SUCCESS == RegOpenKeyEx(HKEY_CURRENT_USER, _T("Software\\Microsoft\\Windows\\CurrentVersion\\AppHost\\IndexedDB\\WinMerge_83g614hpn1ttr"), 0, ulOptions, &hKey))
+	HKEY hBaseKey;
+	bool found = false;
+	if (RegOpenKeyEx(HKEY_CURRENT_USER, _T("Software\\Microsoft\\Windows\\CurrentVersion\\AppHost\\IndexedDB"), 0, ulOptions, &hBaseKey) == ERROR_SUCCESS)
 	{
-		RegCloseKey(hKey);
-		return true;
+		DWORD index = 0;
+		while (true)
+		{
+			TCHAR name[256];
+			DWORD nameLen = _countof(name);
+			if (RegEnumKeyEx(hBaseKey, index++, name, &nameLen, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS)
+				break;
+			if (tc::tcsncmp(name, _T("WinMerge_"), 9) == 0)
+			{
+				found = true;
+				break;
+			}
+		}
+		RegCloseKey(hBaseKey);
 	}
-	return false;
+	return found;
 }
 
 static bool RegisterShellExtension(bool unregister, bool peruser)
@@ -100,7 +115,7 @@ static bool RegisterShellExtension(bool unregister, bool peruser)
 		ShellExecuteEx(&sei);
 
 		regsvr32 = paths::ConcatPath(szSysWow64, _T("regsvr32.exe"));
-		args = options + _T("\"") + paths::ConcatPath(progpath, _T("ShellExtensionU.dll")) + _T("\"");
+		args = options + _T(" \"") + paths::ConcatPath(progpath, _T("ShellExtensionU.dll")) + _T("\"");
 		sei.lpFile = regsvr32.c_str();
 		sei.lpParameters = args.c_str();
 		return !!ShellExecuteEx(&sei);
@@ -125,9 +140,9 @@ static bool RegisterWinMergeContextMenu(bool unregister)
 	String progpath = env::GetProgPath();
 	String packagepath = paths::ConcatPath(progpath, _T("WinMergeContextMenuPackage.msix"));
 	if (!unregister)
-		cmd = strutils::format(_T("powershell -c \"Add-AppxPackage '%s' -ExternalLocation '%s'\""), packagepath, progpath);
+		cmd = strutils::format(_T("powershell -c \"Add-AppxPackage \\\"%s\\\" -ExternalLocation \\\"%s\\\"; if (!$?) { pause }\""), packagepath, progpath);
 	else
-		cmd = _T("powershell -c \"Get-AppxPackage -name WinMerge | Remove-AppxPackage\"");
+		cmd = _T("powershell -c \"Get-AppxPackage -name WinMerge | Remove-AppxPackage; if (!$?) { pause }\"");
 
 	STARTUPINFO stInfo = { sizeof(STARTUPINFO) };
 	stInfo.dwFlags = STARTF_USESHOWWINDOW;
@@ -276,7 +291,7 @@ void PropShell::GetContextRegValues()
 	{
 		String msg = strutils::format(_T("Failed to open registry key HKCU/%s:\n\t%d : %s"),
 			RegDir, retVal, GetSysError(retVal));
-		LogErrorString(msg);
+		RootLogger::Error(msg);
 		return;
 	}
 
@@ -319,7 +334,7 @@ void PropShell::SaveMergePath()
 	{
 		String msg = strutils::format(_T("Failed to open registry key HKCU/%s:\n\t%d : %s"),
 			RegDir, retVal, GetSysError(retVal));
-		LogErrorString(msg);
+		RootLogger::Error(msg);
 		return;
 	}
 
@@ -329,7 +344,7 @@ void PropShell::SaveMergePath()
 	{
 		String msg = strutils::format(_T("Failed to set registry value %s:\n\t%d : %s"),
 			f_RegValuePath, retVal, GetSysError(retVal));
-		LogErrorString(msg);
+		RootLogger::Error(msg);
 	}
 
 	// Determine bitmask for shell extension
@@ -354,7 +369,7 @@ void PropShell::SaveMergePath()
 	{
 		String msg = strutils::format(_T("Failed to set registry value %s to %d:\n\t%d : %s"),
 			f_RegValueEnabled, dwContextEnabled, retVal, GetSysError(retVal));
-		LogErrorString(msg);
+		RootLogger::Error(msg);
 	}
 }
 
@@ -433,6 +448,23 @@ void PropShell::OnUnregisterWinMergeContextMenu()
 void PropShell::OnClearAllRecentItems()
 {
 	JumpList::RemoveRecentDocs();
+	for (const auto& name : {
+		_T("ReportFiles"),
+		_T("Files\\Left"),
+		_T("Files\\Right"),
+		_T("Files\\Option"),
+		_T("Files\\Ext"),
+		_T("Files\\Unpacker"),
+		_T("Files\\Prediffer"),
+		_T("Files\\EditorScript"),
+		_T("Files\\DiffFileResult"),
+		_T("Files\\DiffFile1"),
+		_T("Files\\DiffFile2"),
+		_T("PatchCreator\\DiffContext"),
+		})
+	{
+		CSuperComboBox::ClearState(name);
+	}
 }
 
 void PropShell::OnTimer(UINT_PTR nIDEvent)

@@ -231,6 +231,8 @@ protected :
     HACCEL m_hAccel;
     bool m_bVertScrollBarLocked, m_bHorzScrollBarLocked;
     CEPoint m_ptDraggedTextBegin, m_ptDraggedTextEnd;
+    int m_nRevMarkWidth;
+
     void UpdateCaret ();
     void SetAnchor (const CEPoint & ptNewAnchor);
     int GetTopMarginHeight ();
@@ -369,10 +371,10 @@ protected :
 
     @param subLinePos The sublinebased cursor position
         (see text above for detailed description).
-    @param textPos The calculated line and character position that best matches
+    @return The calculated line and character position that best matches
         the cursor position (see text above for detailed descritpion).
     */
-    void SubLineCursorPosToTextPos( const CEPoint &subLinePos, CEPoint &textPos );
+    CEPoint SubLineCursorPosToTextPos( const CEPoint &subLinePos );
 
     /**
     Returns the character position relative to the given line, that matches
@@ -628,7 +630,8 @@ protected:
     virtual std::vector<CrystalLineParser::TEXTBLOCK> GetAdditionalTextBlocks (int nLineIndex);
 
 public:
-    virtual CString GetHTMLLine (int nLineIndex, const tchar_t* pszTag);
+    virtual CString GetColumnName(int nColumn);
+    virtual CString GetHTMLLine (int nLineIndex, const tchar_t* pszTag, int nColumnCountMax);
     virtual CString GetHTMLStyles ();
     std::vector<CrystalLineParser::TEXTBLOCK> GetTextBlocks(int nLineIndex);
 protected:
@@ -707,6 +710,8 @@ public :
     void SetTopMargin (bool bTopMargin);
     bool GetSelectionMargin () const { return m_bSelMargin; }
     void SetSelectionMargin (bool bSelMargin);
+    int GetRevisionMarkWidth() const { return m_nRevMarkWidth; }
+    void SetRevisionMarkWidth(int width) { m_nRevMarkWidth = width; };
     bool GetViewLineNumbers() const { return m_bViewLineNumbers; }
     void SetViewLineNumbers(bool bViewLineNumbers);
     int  GetLineUsedAsHeaders () const { return m_nLineNumberUsedAsHeaders; }

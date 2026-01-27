@@ -9,7 +9,6 @@
 #include "codepage_detect.h"
 #include <cstdio>
 #include <cstring>
-#include <algorithm>
 #include <memory>
 #include "unicoder.h"
 #include "ExConverter.h"
@@ -243,7 +242,7 @@ FileTextEncoding Guess(const String& ext, const void * src, size_t len, int gues
  */
 FileTextEncoding Guess(const String& filepath, int guessEncodingType, ptrdiff_t mapmaxlen)
 {
-	CMarkdown::FileImage fi(filepath != _T("NUL") ? filepath.c_str() : nullptr, mapmaxlen);
+	CMarkdown::FileImage fi(!paths::IsNullDeviceName(filepath) ? filepath.c_str() : nullptr, mapmaxlen);
 	String ext = paths::FindExtension(filepath);
 	return Guess(ext, fi.pImage, fi.cbImage, guessEncodingType);
 }

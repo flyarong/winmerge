@@ -1,8 +1,13 @@
+for /f %%a in ('powershell -command "Get-Date -Format HH:mm:ss.fff"') do set start=%%a
+
 set workdir=BuildTmp\Src
 if "%1" == "vs2017" (
   set vsversion=vs2017
+)
+if "%1" == "latest" (
+  set vsversion=vs2017_32bit_latest_64bit
 ) else (
-  set vsversion=vs2022x64_vs2017Win32
+  set vsversion=vs2017_32bit_vs2022_64bit
 )
 
 pushd "%~dp0"
@@ -46,7 +51,11 @@ for /d %%d in (Build\ARM64\Release\?.*.*) do (
 )
 popd
 
-call UploadToVirusTotal.cmd
+rem call UploadToVirusTotal.cmd
 
 popd
 
+for /f %%a in ('powershell -command "Get-Date -Format HH:mm:ss.fff"') do set end=%%a
+for /f %%a in ('powershell -command "(New-TimeSpan -Start (Get-Date '%start%') -End (Get-Date '%end%')).TotalMilliseconds"') do set elapsed=%%a
+
+echo %DATE% %start%,%end%,%elapsed%[ms] >> Build\Releases\buildtime.txt

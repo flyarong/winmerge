@@ -18,7 +18,6 @@
 #include "StdAfx.h"
 #include "GhostTextBuffer.h"
 #include "ccrystaltextview.h"
-#include "MergeLineFlags.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -274,7 +273,8 @@ InsertText (CCrystalTextView * pSource, int nLine,
 	// when inserting an EOL terminated text into a ghost line,
 	// there is a discrepancy between nInsertedLines and nEndLine-nRealLine
 	bool bDiscrepancyInInsertedLines;
-	if (bFirstLineGhost && nEndChar == 0 && ApparentLastRealLine() >= nEndLine)
+	if (bFirstLineGhost && nEndChar == 0 &&
+		(ApparentLastRealLine() >= nEndLine || (nEndLine + 1 < m_aLines.size() && m_aLines[nEndLine + 1].FullLength() == 0)))
 		bDiscrepancyInInsertedLines = true;
 	else
 		bDiscrepancyInInsertedLines = false;
@@ -293,12 +293,6 @@ InsertText (CCrystalTextView * pSource, int nLine,
 		else
 			bDiscrepancyInInsertedLines = false;
 	}
-
-	// compute the number of real lines created (for undo)
-	int nRealLinesCreated = nEndLine - nLine;
-	if (bFirstLineGhost && (nEndChar > 0 || ApparentLastRealLine() < nEndLine))
-		// we create one more real line
-		nRealLinesCreated ++;
 
 	int i;
 	for (i = nLine ; i < nEndLine ; i++)
@@ -479,6 +473,8 @@ void CGhostTextBuffer::RemoveAllGhostLines()
 
 		// Discard unused entries in one shot
 		m_aLines.resize(newnl);
+		if (newnl == 0)
+			m_aLines.push_back({ nullptr, 0 });
 		RecomputeRealityMapping();
 	}
 }

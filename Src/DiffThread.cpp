@@ -11,7 +11,6 @@
 #include <climits>
 #include <Poco/Thread.h>
 #include <Poco/Semaphore.h>
-#include "UnicodeString.h"
 #include "CompareStats.h"
 #include "IAbortable.h"
 #include "Plugins.h"
@@ -120,6 +119,7 @@ static void DiffThreadCollect(void *pParam)
 	myStruct->nCollectThreadState = CDiffThread::THREAD_COMPLETED;
 	int event = CDiffThread::EVENT_COLLECT_COMPLETED;
 	myStruct->m_listeners.notify(myStruct, event);
+	myStruct->m_collectCompletedEvent.set();
 };
 
 /**

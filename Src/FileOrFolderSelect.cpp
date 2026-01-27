@@ -17,10 +17,9 @@
 #pragma warning (disable:4091)	// VC bug when using XP enabled toolsets.
 #include <shlobj.h>
 #pragma warning (pop)
-#include <sys/stat.h>
-#include "Environment.h"
 #include "paths.h"
-#include "MergeApp.h"
+#include "I18n.h"
+#include "DarkModeLib.h"
 
 static int CALLBACK BrowseCallbackProc(HWND hwnd, UINT uMsg, LPARAM lParam,
 		LPARAM lpData);
@@ -64,16 +63,15 @@ bool SelectFile(HWND parent, String& path, bool is_open /*= true*/,
 		// If initial path info includes a file
 		// we put the bare filename into sSelectedFile
 		// so the common file dialog will start up with that file selected
-		if (paths::DoesPathExist(initialPath) == paths::IS_EXISTING_FILE)
+		if (paths::DoesPathExist(initialPath) == paths::IS_EXISTING_DIR)
 		{
-			String temp;
-			paths::SplitFilename(initialPath, 0, &temp, 0);
-			lstrcpy(sSelectedFile, temp.c_str());
-			sInitialDir = paths::GetParentPath(initialPath);
+			sInitialDir = initialPath;
 		}
 		else
 		{
-			sInitialDir = initialPath;
+			String temp;
+			paths::SplitFilename(initialPath, &sInitialDir, &temp, 0);
+			lstrcpy(sSelectedFile, temp.c_str());
 		}
 	}
 
@@ -173,11 +171,13 @@ static int CALLBACK BrowseCallbackProc(HWND hwnd, UINT uMsg, LPARAM lParam,
 			SendMessage(hwnd, BFFM_SETSELECTION, TRUE, lpData);
 		else
 			SendMessage(hwnd, BFFM_SETSELECTION, TRUE, (LPARAM)LastSelectedFolder.c_str());
+
+		DarkMode::setDarkWndSafeEx(hwnd, false);
 	}
 	else if (uMsg == BFFM_VALIDATEFAILED)
 	{
 		String strMessage = 
-			strutils::format_string1(_("%1 does not exist. Do you want to create it?"), (tchar_t *)lParam);
+			strutils::format_string1(_("%1 does not exist. Create it?"), (tchar_t *)lParam);
 		int answer = MessageBox(hwnd, strMessage.c_str(), nullptr, MB_YESNO);
 		if (answer == IDYES)
 		{
@@ -212,6 +212,7 @@ bool SelectFileOrFolder(HWND parent, String& path, const tchar_t* initialPath /*
 	// This will tell common file dialog what to show
 	// and also this will hold its return value
 	tchar_t sSelectedFile[MAX_PATH_FULL];
+	String sInitialDir;
 
 	// check if specified path is a file
 	if (initialPath!=nullptr && initialPath[0] != '\0')
@@ -219,10 +220,14 @@ bool SelectFileOrFolder(HWND parent, String& path, const tchar_t* initialPath /*
 		// If initial path info includes a file
 		// we put the bare filename into sSelectedFile
 		// so the common file dialog will start up with that file selected
-		if (paths::DoesPathExist(initialPath) == paths::IS_EXISTING_FILE)
+		if (paths::DoesPathExist(initialPath) == paths::IS_EXISTING_DIR)
+		{
+			sInitialDir = initialPath;
+		}
+		else
 		{
 			String temp;
-			paths::SplitFilename(initialPath, 0, &temp, 0);
+			paths::SplitFilename(initialPath, &sInitialDir, &temp, 0);
 			lstrcpy(sSelectedFile, temp.c_str());
 		}
 	}
@@ -247,7 +252,7 @@ bool SelectFileOrFolder(HWND parent, String& path, const tchar_t* initialPath /*
 	ofn.nFilterIndex = 1;
 	ofn.lpstrFile = sSelectedFile;
 	ofn.nMaxFile = MAX_PATH_FULL;
-	ofn.lpstrInitialDir = initialPath;
+	ofn.lpstrInitialDir = sInitialDir.empty() ? nullptr : sInitialDir.c_str();
 	ofn.lpstrTitle = title.c_str();
 	ofn.lpstrFileTitle = nullptr;
 	ofn.Flags = OFN_HIDEREADONLY | OFN_PATHMUSTEXIST | OFN_NOTESTFILECREATE | OFN_NOCHANGEDIR;

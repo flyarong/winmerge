@@ -103,16 +103,16 @@ void CPatchDlg::OnOK()
 	}
 	if (selectCount == 1)
 	{
-		bool file1Ok = (paths::DoesPathExist(m_file1) != paths::DOES_NOT_EXIST);
-		bool file2Ok = (paths::DoesPathExist(m_file2) != paths::DOES_NOT_EXIST);
+		bool file1Ok = (paths::DoesPathExist(m_file1) != paths::DOES_NOT_EXIST) || paths::IsNullDeviceName(m_file1);
+		bool file2Ok = (paths::DoesPathExist(m_file2) != paths::DOES_NOT_EXIST) || paths::IsNullDeviceName(m_file2);
 
 		if (!file1Ok || !file2Ok)
 		{
 			if (!file1Ok)
-				LangMessageBox(IDS_DIFF_ITEM1NOTFOUND, MB_ICONSTOP);
+				I18n::MessageBox(IDS_DIFF_ITEM1NOTFOUND, MB_ICONSTOP);
 
 			if (!file2Ok)
-				LangMessageBox(IDS_DIFF_ITEM2NOTFOUND, MB_ICONSTOP);
+				I18n::MessageBox(IDS_DIFF_ITEM2NOTFOUND, MB_ICONSTOP);
 			return;
 		}
 
@@ -139,7 +139,7 @@ void CPatchDlg::OnOK()
 		}
 		if (!paths::IsPathAbsolute(m_fileResult))
 		{
-			String msg = strutils::format_string1(_("The specified output path is not an absolute path: %1"),
+			String msg = strutils::format_string1(_("Output path is not absolute: %1"),
 				m_fileResult);
 			AfxMessageBox(msg.c_str(), MB_ICONSTOP);
 			m_ctlResult.SetFocus();
@@ -152,7 +152,7 @@ void CPatchDlg::OnOK()
 	// Result file already exists and append not selected
 	if (fileExists && !m_appendFile)
 	{
-		if (LangMessageBox(IDS_DIFF_FILEOVERWRITE,
+		if (I18n::MessageBox(IDS_DIFF_FILEOVERWRITE,
 				MB_YESNO | MB_ICONWARNING | MB_DONT_ASK_AGAIN,
 				IDS_DIFF_FILEOVERWRITE) != IDYES)
 		{
@@ -222,10 +222,8 @@ BOOL CPatchDlg::OnInitDialog()
 	UpdateData(FALSE);
 
 	// Add patch styles to combobox
-	m_comboStyle.AddString(_("Normal").c_str());
-	m_comboStyle.AddString(_("Context").c_str());
-	m_comboStyle.AddString(_("Unified").c_str());
-	m_comboStyle.AddString(_("HTML").c_str());
+	SetDlgItemComboBoxList(IDC_DIFF_STYLE,
+		{ _("Normal"), _("Context"), _("Unified"), _("HTML") });
 
 	m_outputStyle = OUTPUT_NORMAL;
 	m_comboStyle.SetCurSel(0);
@@ -233,11 +231,8 @@ BOOL CPatchDlg::OnInitDialog()
 	// Add default context line counts to combobox if its empty
 	if (m_comboContext.GetCount() == 0)
 	{
-		m_comboContext.AddString(_T("0"));
-		m_comboContext.AddString(_T("1"));
-		m_comboContext.AddString(_T("3"));
-		m_comboContext.AddString(_T("5"));
-		m_comboContext.AddString(_T("7"));
+		SetDlgItemComboBoxList(IDC_DIFF_CONTEXT,
+			{ _T("0"), _T("1"), _T("3"), _T("5"), _T("7") });
 	}
 	
 	LoadSettings();
@@ -367,10 +362,8 @@ void CPatchDlg::UpdateSettings()
 
 	m_comboContext.SelectString(-1, strutils::to_str(m_contextLines).c_str());
 
-	if (m_outputStyle == OUTPUT_CONTEXT || m_outputStyle == OUTPUT_UNIFIED || m_outputStyle == OUTPUT_HTML)
-		m_comboContext.EnableWindow(TRUE);
-	else
-		m_comboContext.EnableWindow(FALSE);
+	bool enabled = (m_outputStyle == OUTPUT_CONTEXT || m_outputStyle == OUTPUT_UNIFIED || m_outputStyle == OUTPUT_HTML);
+	m_comboContext.EnableWindow(enabled);
 }
 
 /** 

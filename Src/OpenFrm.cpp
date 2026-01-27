@@ -5,6 +5,7 @@
 #include "OptionsDef.h"
 #include "OptionsMgr.h"
 #include "MergeFrameCommon.h"
+#include "DarkModeLib.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -49,7 +50,7 @@ BOOL COpenFrame::OnEraseBkgnd(CDC* pDC)
 {
 	CRect rect;
 	GetClientRect(&rect);
-	pDC->FillSolidRect(&rect, ::GetSysColor(COLOR_APPWORKSPACE));
+	pDC->FillSolidRect(&rect, DarkMode::isEnabled() ? DarkMode::getBackgroundColor() : ::GetSysColor(COLOR_APPWORKSPACE));
 	return TRUE;
 }
 
@@ -92,15 +93,18 @@ void COpenFrame::ActivateFrame(int nCmdShow)
 	__super::ActivateFrame(nCmdShow);
 	if (CView *const pView = GetActiveView())
 	{
-		WINDOWPLACEMENT wp = { sizeof wp };
-		GetWindowPlacement(&wp);
-		CRect rc;
-		pView->GetWindowRect(&rc);
-		CalcWindowRect(&rc, CWnd::adjustOutside);
-		wp.rcNormalPosition.right = wp.rcNormalPosition.left + rc.Width();
-		wp.rcNormalPosition.bottom = wp.rcNormalPosition.top + rc.Height();
-		SetWindowPlacement(&wp);
-		pView->ShowWindow(SW_SHOW);
+		if (!IsZoomed())
+		{
+			WINDOWPLACEMENT wp = { sizeof wp };
+			GetWindowPlacement(&wp);
+			CRect rc;
+			pView->GetWindowRect(&rc);
+			CalcWindowRect(&rc, CWnd::adjustOutside);
+			wp.rcNormalPosition.right = wp.rcNormalPosition.left + rc.Width();
+			wp.rcNormalPosition.bottom = wp.rcNormalPosition.top + rc.Height();
+			SetWindowPlacement(&wp);
+			pView->ShowWindow(SW_SHOW);
+		}
 	}
 }
 

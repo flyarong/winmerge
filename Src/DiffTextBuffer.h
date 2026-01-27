@@ -43,13 +43,12 @@ public :
 	CDiffTextBuffer(CMergeDoc * pDoc, int pane);
 
 	void SetTempPath(const String &path);
-	String GetTempFileName() const { return m_strTempFileName; }
+	const String& GetTempFileName() const { return m_strTempFileName; }
 	virtual void AddUndoRecord (bool bInsert, const CEPoint & ptStartPos,
 		const CEPoint & ptEndPos, const tchar_t* pszText, size_t cchText,
 		int nActionType = CE_ACTION_UNKNOWN,
 		std::vector<uint32_t> *paSavedRevisionNumbers = nullptr) override;
 	bool curUndoGroup();
-	void ReplaceFullLines(CDiffTextBuffer& dbuf, CDiffTextBuffer& sbuf, CCrystalTextView * pSource, int nLineBegin, int nLineEnd, int nAction =CE_ACTION_UNKNOWN);
 
 	int LoadFromFile(const tchar_t* pszFileName, PackingInfo& infoUnpacker,
 		const tchar_t* filteredFilenames, bool & readOnly, CRLFSTYLE nCrlfStyle,

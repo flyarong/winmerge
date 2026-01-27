@@ -6,7 +6,6 @@
 
 #include "stdafx.h"
 #include "PropEditorSyntax.h"
-#include "OptionsDef.h"
 #include "OptionsMgr.h"
 #include "OptionsPanel.h"
 #include "OptionsEditorSyntax.h"
@@ -96,13 +95,11 @@ void PropEditorSyntax::InitList()
 	String title = _("File Type");
 	m_listSyntax.InsertColumn(0, title.c_str(), LVCFMT_LEFT, pointToPixel(60));
 	title = _("Extension");
-	m_listSyntax.InsertColumn(1, title.c_str(), LVCFMT_LEFT, pointToPixel(196));
+	m_listSyntax.InsertColumn(1, title.c_str(), LVCFMT_LEFT, pointToPixel(256));
 
 	m_listSyntax.SetReadOnlyColumn(0);
 	m_listSyntax.SetEditStyle(1, CSubeditList::EditStyle::WILDCARD_DROP_LIST);
 
-	int nLimitTextSize = (sizeof(CrystalLineParser::TextDefinition::exts) / sizeof(CrystalLineParser::TextDefinition::exts[0])) - 1;
-	m_listSyntax.SetLimitTextSize(1, nLimitTextSize);
 
 	String fixedPattern[CrystalLineParser::SRC_XML];
 	Options::EditorSyntax::GetDefaults(GetOptionsMgr(), fixedPattern);

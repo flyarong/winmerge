@@ -108,6 +108,7 @@
 #include <numeric>
 #include <malloc.h>
 #include <imm.h> /* IME */
+#include "darkmodelib.h"
 
 using std::vector;
 using CrystalLineParser::TEXTBLOCK;
@@ -125,17 +126,6 @@ using CrystalLineParser::TEXTBLOCK;
 #define new DEBUG_NEW
 #endif
 
-
-// The vcruntime.h version of _countf() gives syntax errors starting with VS 15.7.2,
-// but only with `CCrystalTextView::m_SourceDefs` (which is local to this .cpp file), 
-// and only for X64 compilations (Win32 is ok, probably because no alignment issues
-// are involved).  I think that this could be related to C++17 compliance issues.
-// This patch reverts to a 'traditional' definition of _countf(), a pre-existing 
-// part of the CCrystalTextView package.
-#undef _countof
-#ifndef _countof
-#define _countof(array) (sizeof(array)/sizeof(array[0]))
-#endif
 
 #define DEFAULT_PRINT_MARGIN        1000    //  10 millimeters
 
@@ -325,7 +315,7 @@ DoSetTextType (CrystalLineParser::TextDefinition *def)
 bool CCrystalTextView::
 SetTextType (const tchar_t* pszExt)
 {
-  m_CurSourceDef = CrystalLineParser::m_SourceDefs;
+  m_CurSourceDef = &CrystalLineParser::m_SourceDefs[0];
 
   CrystalLineParser::TextDefinition *def = CrystalLineParser::GetTextType (pszExt);
 
@@ -337,8 +327,8 @@ SetTextType (CrystalLineParser::TextType enuType)
 {
   CrystalLineParser::TextDefinition *def;
 
-  m_CurSourceDef = def = CrystalLineParser::m_SourceDefs;
-  for (int i = 0; i < _countof (CrystalLineParser::m_SourceDefs); i++, def++)
+  m_CurSourceDef = def = &CrystalLineParser::m_SourceDefs[0];
+  for (size_t i = 0; i < CrystalLineParser::m_SourceDefs.size(); i++, def++)
     {
       if (def->type == enuType)
         {
@@ -438,6 +428,7 @@ CCrystalTextView::CCrystalTextView ()
 , m_pCrystalRendererSaved(nullptr)
 , m_nColumnResizing(-1)
 , m_nLineNumberUsedAsHeaders(-1)
+, m_nRevMarkWidth(MARGIN_REV_WIDTH)
 {
 #ifdef _WIN64
   if (m_nRenderingMode == RENDERING_MODE::GDI)
@@ -660,7 +651,7 @@ GetLineActualLength (int nLineIndex)
                         nActualLength ++;
                       else
                         nActualLength += GetCharCellCountFromChar (pszChars + i);
-                      if (nColumn < nColumnCount && nActualLength > nColumnTotalWidth + m_pTextBuffer->GetColumnWidth (nColumn))
+                      if (nColumn < nColumnCount - 1 && nActualLength > nColumnTotalWidth + m_pTextBuffer->GetColumnWidth (nColumn))
                         nActualLength = nColumnTotalWidth + m_pTextBuffer->GetColumnWidth (nColumn);
                     }
                 }
@@ -856,7 +847,7 @@ ExpandChars (int nLineIndex, int nOffset, int nCount, CString & line, int nActua
     {
       tchar_t c = pszChars[i];
       if (c == _T('\t'))
-        nCount += nTabSize - 1;
+        nCount += (std::max)(nTabSize - 1, 1);
       else if (c >= _T('\x00') && c <= _T('\x1F') && c != _T('\r') && c != _T('\n'))
         nCount += 2;
     }
@@ -1350,7 +1341,7 @@ DrawLineHelperImpl (CPoint & ptOrigin, const CRect & rcClip, int nColorIndex,
 bool CCrystalTextView::
 GetSelectionLeftRight(int nLineIndex, int& nSelLeft, int& nSelRight)
 {
-    int nLineLength = GetLineLength (nLineIndex);
+    int nLineLength = GetViewableLineLength (nLineIndex);
     nSelLeft = 0;
     nSelRight = 0;
     if ( !m_bRectangularSelection )
@@ -2229,7 +2220,10 @@ GetHTMLStyles ()
     }
   CEColor clrSelMargin = GetColor(COLORINDEX_SELMARGIN);
   CEColor clrNormalText = GetColor(COLORINDEX_NORMALTEXT);
-  strStyles += Fmt(_T(".ln {text-align: right; word-break: normal; color: #%02x%02x%02x; background-color: #%02x%02x%02x;}\n"),
+  strStyles += Fmt(_T(".cn {text-align: center; word-break: normal; color: #%02x%02x%02x; background-color: #%02x%02x%02x;}\n")
+                   _T(".ln {text-align: right; word-break: normal; color: #%02x%02x%02x; background-color: #%02x%02x%02x;}\n"),
+    GetRValue(clrNormalText), GetGValue(clrNormalText), GetBValue(clrNormalText),
+    GetRValue(clrSelMargin), GetGValue(clrSelMargin), GetBValue(clrSelMargin),
     GetRValue(clrNormalText), GetGValue(clrNormalText), GetBValue(clrNormalText),
     GetRValue(clrSelMargin), GetGValue(clrSelMargin), GetBValue(clrSelMargin));
   return strStyles;
@@ -2277,14 +2271,30 @@ GetHTMLAttribute (int nColorIndex, int nBgColorIndex, CEColor crText, CEColor cr
   return strAttr;
 }
 
+CString CCrystalTextView::
+GetColumnName(int nColumn)
+{
+  CString columnName;
+  for (int i = 0; ; ++i)
+    {
+      tchar_t c = 'A' + (nColumn % 26) - (i == 0 ? 0 : 1);
+      columnName.Insert (0, c);
+      nColumn /= 26;
+      if (nColumn == 0)
+        break;
+    }
+  return columnName;
+};
+
 /**
  * @brief Retrieve the html version of the line
  * @param [in] nLineIndex  Index of line in view
  * @param [in] pszTag      The HTML tag to enclose the line
+ * @param [in] nColumnCountMax Maximum number of columns
  * @return The html version of the line
  */
 CString CCrystalTextView::
-GetHTMLLine (int nLineIndex, const tchar_t* pszTag)
+GetHTMLLine (int nLineIndex, const tchar_t* pszTag, int nColumnCountMax)
 {
   ASSERT (nLineIndex >= -1 && nLineIndex < GetLineCount ());
 
@@ -2296,47 +2306,133 @@ GetHTMLLine (int nLineIndex, const tchar_t* pszTag)
   GetLineColors (nLineIndex, crBkgnd, crText, bDrawWhitespace);
 
   std::vector<TEXTBLOCK> blocks = GetTextBlocks(nLineIndex);
-
+  int nColumn = 0;
+  const int nColumnCount = m_pTextBuffer->GetColumnCount (nLineIndex);
   CString strHTML;
   CString strExpanded;
-  size_t i;
   int nNonbreakChars = 0;
   bool bLastCharSpace = false;
   const int nScreenChars = 40; //  GetScreenChars();
 
-  strHTML += _T("<");
-  strHTML += pszTag;
-  strHTML += _T(" ");
-  strHTML += GetHTMLAttribute (COLORINDEX_NORMALTEXT, COLORINDEX_BKGND, crText, crBkgnd);
-  strHTML += _T("><code>");
-
   auto MakeSpan = [&](const TEXTBLOCK& block, const CString& strExpanded) {
-    CString strHTML;
-    strHTML += _T("<span ");
-    strHTML += GetHTMLAttribute (block.m_nColorIndex, block.m_nBgColorIndex, crText, crBkgnd);
-    strHTML += _T(">");
-    strHTML += EscapeHTML (strExpanded, bLastCharSpace, nNonbreakChars, nScreenChars);
-    strHTML += _T("</span>");
-    return strHTML;
-  };
+      CString strHTML;
+      strHTML += _T("<span ");
+      strHTML += GetHTMLAttribute (block.m_nColorIndex, block.m_nBgColorIndex, crText, crBkgnd);
+      strHTML += _T(">");
+      strHTML += EscapeHTML (strExpanded, bLastCharSpace, nNonbreakChars, nScreenChars);
+      strHTML += _T("</span>");
+      return strHTML;
+      };
 
-  for (i = 0; i < blocks.size() - 1; i++)
+  const TextLayoutMode layoutMode = GetTextLayoutMode ();
+  if (layoutMode == TEXTLAYOUT_TABLE_NOWORDWRAP ||
+      layoutMode == TEXTLAYOUT_TABLE_WORDWRAP)
     {
-      ExpandChars (nLineIndex, blocks[i].m_nCharPos, blocks[i + 1].m_nCharPos - blocks[i].m_nCharPos, strExpanded, 0);
-      if (!strExpanded.IsEmpty())
-        strHTML += MakeSpan(blocks[i], strExpanded);
+      std::vector<int> anBreaks;
+      if (layoutMode == TEXTLAYOUT_TABLE_WORDWRAP)
+        {
+          int nBreaks = 0;
+          anBreaks.resize (GetLineLength(nLineIndex) + 1);
+          WrapLineCached ( nLineIndex, nScreenChars, &anBreaks, nBreaks );
+        }
+      anBreaks.push_back (-nLength);
+
+      const tchar_t* pszChars = GetLineChars (nLineIndex);
+      const int sep = m_pTextBuffer->GetFieldDelimiter ();
+      const int quote = m_pTextBuffer->GetFieldEnclosure ();
+      bool bInQuote = false;
+
+      strHTML += _T("<");
+      strHTML += pszTag;
+      strHTML += _T(" ");
+      if (nColumn + 1 == nColumnCount && (nColumnCountMax - nColumn) > 1)
+        {
+          CString colspan;
+          colspan.Format (_T("colspan=\"%d\" "), nColumnCountMax - nColumn);
+          strHTML += colspan;
+        }
+      strHTML += GetHTMLAttribute (COLORINDEX_NORMALTEXT, COLORINDEX_BKGND, crText, crBkgnd);
+      strHTML += _T("><code>");
+      int k = 0;
+      for (size_t j = 0; j < blocks.size(); j++)
+        {
+          int blockBegin = blocks[j].m_nCharPos;
+          int blockEnd = (j + 1 < blocks.size()) ? blocks[j + 1].m_nCharPos : nLength;
+          for (int i = blockBegin; i < blockEnd; i++)
+            {
+              tchar_t c = pszChars[i];
+              if (abs(anBreaks[k]) == i)
+                {
+                  if (anBreaks[k] >= 0)
+                    {
+                      ExpandChars (nLineIndex, blockBegin, i - blockBegin, strExpanded, 0);
+                      strHTML += MakeSpan (blocks[j], strExpanded);
+                      strHTML += _T("<br />");
+                      blockBegin = i;
+                    }
+                  k++;
+                }
+              if (!bInQuote && c == sep)
+                {
+                  ExpandChars (nLineIndex, blockBegin, i + 1 - blockBegin, strExpanded, 0);
+                  strHTML += MakeSpan (blocks[j], strExpanded);
+                  blockBegin = i + 1;
+                  bLastCharSpace = false;
+                  nNonbreakChars = 0;
+                  nColumn++;
+                  strHTML += _T("</code></");
+                  strHTML += pszTag;
+                  strHTML += _T("><");
+                  strHTML += pszTag;
+                  strHTML += _T(" ");
+                  if (nColumn + 1 == nColumnCount && (nColumnCountMax - nColumn) > 1)
+                    {
+                      CString colspan;
+                      colspan.Format (_T("colspan=\"%d\" "), nColumnCountMax - nColumn);
+                      strHTML += colspan;
+                    }
+                  strHTML += GetHTMLAttribute (COLORINDEX_NORMALTEXT, COLORINDEX_BKGND, crText, crBkgnd);
+                  strHTML += _T("><code>");
+                }
+              else if (c == quote)
+                {
+                  bInQuote = !bInQuote;
+                }
+            }
+          ExpandChars (nLineIndex, blockBegin, blockEnd - blockBegin, strExpanded, 0);
+          strHTML += MakeSpan (blocks[j], strExpanded);
+        }
+      strHTML += _T("</code></");
+      strHTML += pszTag;
+      strHTML += _T(">");
     }
-  if (blocks.size() > 0)
+  else
     {
-      ExpandChars (nLineIndex, blocks[i].m_nCharPos, nLength - blocks[i].m_nCharPos, strExpanded, 0);
-      if (!strExpanded.IsEmpty())
-        strHTML += MakeSpan(blocks[i], strExpanded);
-      if (strExpanded.Compare (CString (' ', strExpanded.GetLength())) == 0)
-        strHTML += _T("&nbsp;");
+      strHTML += _T("<");
+      strHTML += pszTag;
+      strHTML += _T(" ");
+      strHTML += GetHTMLAttribute (COLORINDEX_NORMALTEXT, COLORINDEX_BKGND, crText, crBkgnd);
+      strHTML += _T("><code>");
+
+      size_t i;
+      for (i = 0; i < blocks.size() - 1; i++)
+      {
+          ExpandChars (nLineIndex, blocks[i].m_nCharPos, blocks[i + 1].m_nCharPos - blocks[i].m_nCharPos, strExpanded, 0);
+          if (!strExpanded.IsEmpty())
+              strHTML += MakeSpan(blocks[i], strExpanded);
+      }
+      if (blocks.size() > 0)
+      {
+          ExpandChars (nLineIndex, blocks[i].m_nCharPos, nLength - blocks[i].m_nCharPos, strExpanded, 0);
+          if (!strExpanded.IsEmpty())
+              strHTML += MakeSpan(blocks[i], strExpanded);
+          if (strExpanded.Compare (CString (' ', strExpanded.GetLength())) == 0)
+              strHTML += _T("&nbsp;");
+      }
+      strHTML += _T("</code></");
+      strHTML += pszTag;
+      strHTML += _T(">");
     }
-  strHTML += _T("</code></");
-  strHTML += pszTag;
-  strHTML += _T(">");
 
   return strHTML;
 }
@@ -2364,20 +2460,6 @@ GetLineFlags (int nLineIndex) const
 void CCrystalTextView::
 GetTopMarginText (const CRect& rect, CString& text, std::vector<int>& nWidths)
 {
-  auto getColumnName = [](int nColumn) -> CString
-    {
-      CString columnName;
-      for (int i = 0; ; ++i)
-        {
-          tchar_t c = 'A' + (nColumn % 26) - (i == 0 ? 0 : 1);
-          columnName.Insert (0, c);
-          nColumn /= 26;
-          if (nColumn == 0)
-            break;
-        }
-      return columnName;
-    };
-
   auto replaceControlChars = [](const CString& text) -> CString
     {
       CString result;
@@ -2400,10 +2482,11 @@ GetTopMarginText (const CRect& rect, CString& text, std::vector<int>& nWidths)
     {
       int nColumnWidth = m_pTextBuffer->GetColumnWidth (nColumn);
       CString columnName;
-      if (m_nTopSubLine > 0 && m_nLineNumberUsedAsHeaders >= 0 && m_nLineNumberUsedAsHeaders < m_pTextBuffer->GetLineCount())
+      if (m_nLineNumberUsedAsHeaders >= 0 && m_nLineNumberUsedAsHeaders < m_pTextBuffer->GetLineCount() && 
+          (m_nTopSubLine > 0 || (m_pTextBuffer->GetLineFlags(m_nLineNumberUsedAsHeaders) & LF_INVISIBLE)))
         columnName = replaceControlChars (m_pTextBuffer->GetCellText (m_nLineNumberUsedAsHeaders, nColumn).c_str ()); // Use std::basic_string<tchar_t> instead of CString
       if (columnName.IsEmpty())
-        columnName = getColumnName (nColumn);
+        columnName = GetColumnName (nColumn);
       int columnNameLen = 0;
       std::vector<int> nCharWidths;
       for (int i = 0; i < columnName.GetLength(); ++i)
@@ -2488,8 +2571,11 @@ DrawMargin (const CRect & rect, int nLineIndex, int nLineNumber)
     }
 
   // draw line revision marks
-  CRect rc(rect.right - MARGIN_REV_WIDTH, rect.top, rect.right, rect.bottom);
-  m_pCrystalRenderer->FillSolidRectangle (rc, clrRevisionMark);
+  if (m_nRevMarkWidth > 0)
+    {
+      CRect rc(rect.right - m_nRevMarkWidth, rect.top, rect.right, rect.bottom);
+      m_pCrystalRenderer->FillSolidRectangle (rc, clrRevisionMark);
+    }
 
   if (!m_bSelMargin)
     return;
@@ -2654,6 +2740,7 @@ OnDraw (CDC * pdc)
 
   m_pCrystalRenderer->BindDC(cacheDC, rcClient);
   m_pCrystalRenderer->BeginDraw();
+  m_pCrystalRenderer->SetLineColor(GetColor(COLORINDEX_NORMALTEXT));
 
   int nLastLineBottom = 0;
   int nCurrentLine = m_nTopLine;
@@ -2778,7 +2865,13 @@ UpdateCaret ()
           CreateSolidCaret (nCaretWidth, nCaretHeight);
         }
       else
-        CreateSolidCaret (2, nCaretHeight);
+        {
+          DWORD caretWidth = 1;
+          SystemParametersInfo (SPI_GETCARETWIDTH, 0, &caretWidth, 0);
+          const int dpi = CClientDC (this).GetDeviceCaps (LOGPIXELSX);
+          const int nCaretWidth = MulDiv (caretWidth, dpi, 96);
+          CreateSolidCaret (nCaretWidth, nCaretHeight);
+        }
 
       SetCaretPos (TextToClient (m_ptCursorPos));
       ShowCaret ();
@@ -2991,7 +3084,7 @@ int CCrystalTextView::CursorPointToCharPos( int nLineIndex, const CEPoint &curPo
                     nOffset = 1;
                   else
                     nOffset = GetCharCellCountFromChar (szLine + nIndex);
-                  if (nColumn < nColumnCount && nCurPos + nOffset > nColumnTotalWidth + m_pTextBuffer->GetColumnWidth (nColumn))
+                  if (nColumn < nColumnCount - 1 && nCurPos + nOffset > nColumnTotalWidth + m_pTextBuffer->GetColumnWidth (nColumn))
                     nOffset = nColumnTotalWidth + m_pTextBuffer->GetColumnWidth (nColumn) - nXPos;
                 }
               nXPos += nOffset;
@@ -3091,7 +3184,7 @@ int CCrystalTextView::CursorPointToCharPos( int nLineIndex, const CEPoint &curPo
   return nIndex;
 }
 
-void CCrystalTextView::SubLineCursorPosToTextPos( const CEPoint &subLineCurPos, CEPoint &textPos )
+CEPoint CCrystalTextView::SubLineCursorPosToTextPos( const CEPoint &subLineCurPos )
 {
   // Get line breaks
   int	nSubLineOffset, nLine;
@@ -3099,8 +3192,7 @@ void CCrystalTextView::SubLineCursorPosToTextPos( const CEPoint &subLineCurPos, 
   GetLineBySubLine( subLineCurPos.y, nLine, nSubLineOffset );
 
   // compute cursor-position
-  textPos.x = CursorPointToCharPos( nLine, CEPoint( subLineCurPos.x, nSubLineOffset ) );
-  textPos.y = nLine;
+  return { CursorPointToCharPos(nLine, CEPoint(subLineCurPos.x, nSubLineOffset)), nLine };
 }
 
 /**
@@ -3290,9 +3382,9 @@ void CCrystalTextView::
 OnInitialUpdate ()
 {
   CView::OnInitialUpdate ();
-  CString sDoc = GetDocument ()->GetPathName (), sExt = GetExt (sDoc);
-  if (!sExt.IsEmpty())
-    SetTextType (sExt);
+  std::basic_string<tchar_t> sDoc = GetDocument ()->GetPathName (), sExt = GetExt (sDoc);
+  if (!sExt.empty ())
+    SetTextType (sExt.c_str ());
   AttachToBuffer (nullptr);
 
   CSplitterWnd *pSplitter = GetParentSplitter (this, false);
@@ -3638,8 +3730,7 @@ int CCrystalTextView::GetSubLineIndex( int nLineIndex )
   else
     {
       m_nLastLineIndexCalculatedSubLineIndex = 0;
-      if (m_panSubLineIndexCache->size () >= 0)
-        m_panSubLineIndexCache->resize (1);
+      m_panSubLineIndexCache->resize (1);
       (*m_panSubLineIndexCache)[0] = 0;
     }
 
@@ -3889,8 +3980,7 @@ OnSize (UINT nType, int cx, int cy)
 
   //BEGIN SW
   // get char position of top left visible character with old cached word wrap
-  CEPoint	topPos;
-  SubLineCursorPosToTextPos( CEPoint( 0, m_nTopSubLine ), topPos );
+  CEPoint	topPos = SubLineCursorPosToTextPos( CEPoint( 0, m_nTopSubLine ) );
   //END SW
 
   //BEGIN SW
@@ -4322,7 +4412,7 @@ ClientToText (const CPoint & point)
                     nOffset = 1;
                   else
                     nOffset = GetCharCellCountFromChar (pszLine + nIndex);
-                  if (nColumn < nColumnCount && nCurPos + nOffset > nColumnTotalWidth + m_pTextBuffer->GetColumnWidth (nColumn))
+                  if (nColumn < nColumnCount - 1 && nCurPos + nOffset > nColumnTotalWidth + m_pTextBuffer->GetColumnWidth (nColumn))
                     nOffset = nColumnTotalWidth + m_pTextBuffer->GetColumnWidth (nColumn) - nCurPos;
                 }
               n += nOffset;
@@ -4539,7 +4629,7 @@ TextToClient (const CEPoint & point)
                     pt.x ++;
                   else
                     pt.x += GetCharCellCountFromChar(pszLine + nIndex);
-                  if (nColumn < nColumnCount && pt.x > nColumnTotalWidth + m_pTextBuffer->GetColumnWidth (nColumn))
+                  if (nColumn < nColumnCount - 1 && pt.x > nColumnTotalWidth + m_pTextBuffer->GetColumnWidth (nColumn))
                     pt.x = nColumnTotalWidth + m_pTextBuffer->GetColumnWidth (nColumn);
                 }
             }
@@ -4724,7 +4814,7 @@ CalculateActualOffset (int nLineIndex, int nCharIndex, bool bAccumulate)
                     nOffset ++;
                   else
                     nOffset += GetCharCellCountFromChar (pszChars + I);
-                  if (nColumn < nColumnCount && nOffset > nColumnTotalWidth + m_pTextBuffer->GetColumnWidth (nColumn))
+                  if (nColumn < nColumnCount - 1 && nOffset > nColumnTotalWidth + m_pTextBuffer->GetColumnWidth (nColumn))
                     nOffset = nColumnTotalWidth + m_pTextBuffer->GetColumnWidth (nColumn);
                 }
             }
@@ -4831,7 +4921,7 @@ ApproxActualOffset (int nLineIndex, int nOffset)
                     nCurrentOffset ++;
                   else
                     nCurrentOffset += GetCharCellCountFromChar (pszChars + I);
-                  if (nColumn < nColumnCount && nCurrentOffset > nColumnTotalWidth + m_pTextBuffer->GetColumnWidth (nColumn))
+                  if (nColumn < nColumnCount - 1 && nCurrentOffset > nColumnTotalWidth + m_pTextBuffer->GetColumnWidth (nColumn))
                     nCurrentOffset = nColumnTotalWidth + m_pTextBuffer->GetColumnWidth (nColumn);
                 }
               if (nCurrentOffset >= nOffset)
@@ -5421,10 +5511,10 @@ HighlightText (const CEPoint & ptStartPos, int nLength,
     {
       while (nLength > nCount)
         {
-          nLength -= nCount + 1;
+          nLength -= nCount + GetTextBufferEol (ptEndPos.y).GetLength ();
           nCount = GetLineLength (++ptEndPos.y);
         }
-      ptEndPos.x = nLength;
+      ptEndPos.x = (nLength < 0) ? 0 : nLength;
     }
   ASSERT_VALIDTEXTPOS (m_ptCursorPos);  //  Probably 'nLength' is bigger than expected...
 
@@ -5467,29 +5557,29 @@ FindText (const tchar_t* pszText, const CEPoint & ptStartPos, DWORD dwFlags,
                           dwFlags, bWrapSearch, pptFoundPos);
 }
 
-int HowManyStr (const tchar_t* s, const tchar_t* m)
+int HowManyEOLs (const tchar_t* s, size_t length)
 {
-  const tchar_t* p = s;
-  int n = 0;
-  const int l = (int) tc::tcslen (m);
-  while ((p = tc::tcsstr (p, m)) != nullptr)
+  int newlineCount = 0;
+  bool wasCR = false;
+  for (size_t i = 0; i < length; ++i)
     {
-      n++;
-      p += l;
-    }
-  return n;
-}
-
-int HowManyStr (const tchar_t* s, tchar_t c)
-{
-  const tchar_t* p = s;
-  int n = 0;
-  while ((p = tc::tcschr (p, c)) != nullptr)
-    {
-      n++;
-      p++;
-    }
-  return n;
+      tchar_t ch = s[i];
+      if (ch == '\n')
+        {
+	      if (wasCR)
+            wasCR = false;
+          else
+            newlineCount++;
+        }
+	  else if (ch == '\r')
+      {
+        newlineCount++;
+        wasCR = true;
+      }
+    else
+      wasCR = false;
+  }
+  return newlineCount;
 }
 
 bool CCrystalTextView::
@@ -5516,7 +5606,10 @@ FindTextInBlock (const tchar_t* pszText, const CEPoint & ptStartPosition,
   int nEolns;
   if (dwFlags & FIND_REGEXP)
     {
-      nEolns = HowManyStr (what, _T("\\n"));
+      CString what2 = what;
+      what2.Replace(_T("\\r"), _T("\r"));
+      what2.Replace(_T("\\n"), _T("\n"));
+      nEolns = HowManyEOLs (what2, what2.GetLength ());
     }
   else
     {
@@ -5547,7 +5640,7 @@ FindTextInBlock (const tchar_t* pszText, const CEPoint & ptStartPosition,
                         {
                           nLineLength = GetLineLength (ptCurrentPos.y - i);
                           ptCurrentPos.x = 0;
-                          line = _T ('\n') + line;
+                          line = GetTextBufferEol (ptCurrentPos.y - i) + line;
                         }
                       else
                         {
@@ -5595,6 +5688,7 @@ FindTextInBlock (const tchar_t* pszText, const CEPoint & ptStartPosition,
               if( nFoundPos != -1 )	// Found text!
                 {
                   ptCurrentPos.x = static_cast<int>(nFoundPos);
+                  ptCurrentPos.y -= nEolns;
                   *pptFoundPos = ptCurrentPos;
                   return true;
                 }
@@ -5630,7 +5724,7 @@ FindTextInBlock (const tchar_t* pszText, const CEPoint & ptStartPosition,
                       nLineLength = GetLineLength (ptCurrentPos.y + i);
                       if (i)
                         {
-                          line += _T ('\n');
+                          line += GetTextBufferEol (ptCurrentPos.y + i - 1);
                         }
                       if (nLineLength > 0)
                         {
@@ -5657,18 +5751,19 @@ FindTextInBlock (const tchar_t* pszText, const CEPoint & ptStartPosition,
               size_t nPos = ::FindStringHelper (line, line.GetLength (), static_cast<const tchar_t*>(line) + ptCurrentPos.x, what, dwFlags, m_nLastFindWhatLen, m_rxnode, &m_rxmatch);
               if (nPos != -1)
                 {
-                  if (m_pszMatched != nullptr)
-                    free(m_pszMatched);
+                  free(m_pszMatched);
                   m_pszMatched = tc::tcsdup (line);
                   if (nEolns)
                     {
                       CString item = line.Left (static_cast<LONG>(nPos));
                       const tchar_t* current = tc::tcsrchr (item, _T('\n'));
+                      if (!current)
+                        current = tc::tcsrchr (item, _T('\r'));
                       if (current)
                         current++;
                       else
                         current = item;
-                      nEolns = HowManyStr (item, _T('\n'));
+                      nEolns = HowManyEOLs (item, item.GetLength ());
                       if (nEolns)
                         {
                           ptCurrentPos.y += nEolns;
@@ -5694,8 +5789,7 @@ FindTextInBlock (const tchar_t* pszText, const CEPoint & ptStartPosition,
                 }
               else
                 {
-                  if (m_pszMatched != nullptr)
-                    free(m_pszMatched);
+                  free(m_pszMatched);
                   m_pszMatched = nullptr;
                 }
 
@@ -5750,8 +5844,7 @@ FindText (const LastSearchInfos * lastSearch)
 
   //  Save search parameters for 'F3' command
   m_bLastSearch = true;
-  if (m_pszLastFindWhat != nullptr)
-    free (m_pszLastFindWhat);
+  free (m_pszLastFindWhat);
   m_pszLastFindWhat = tc::tcsdup (lastSearch->m_sText);
   m_dwLastSearchFlags = dwSearchFlags;
 
@@ -5933,6 +6026,10 @@ OnFilePageSetup ()
   dlg.m_psd.hDevMode = pd.hDevMode;
   dlg.m_psd.hDevNames = pd.hDevNames;
   dlg.m_psd.Flags |= PSD_INHUNDREDTHSOFMILLIMETERS|PSD_MARGINS;
+#if defined(USE_DARKMODELIB)
+  dlg.m_psd.Flags |= PSD_ENABLEPAGESETUPHOOK;
+  dlg.m_psd.lpfnPageSetupHook = static_cast<LPPAGESETUPHOOK>(DarkMode::HookDlgProc);
+#endif
   dlg.m_psd.ptPaperSize.x   = pApp->GetProfileInt(EDITPAD_SECTION, _T("PageWidth"),  dlg.m_psd.ptPaperSize.x);
   dlg.m_psd.ptPaperSize.y   = pApp->GetProfileInt(EDITPAD_SECTION, _T("PageHeight"), dlg.m_psd.ptPaperSize.y);
   dlg.m_psd.rtMargin.left   = pApp->GetProfileInt(EDITPAD_SECTION, _T("PageLeft"),   DEFAULT_PRINT_MARGIN);
@@ -6124,7 +6221,7 @@ GetMarginWidth (CDC *pdc /*= nullptr*/)
   else
     {
       if (pdc == nullptr || !pdc->IsPrinting ())
-        nMarginWidth += MARGIN_REV_WIDTH; // Space for revision marks
+        nMarginWidth += m_nRevMarkWidth; // Space for revision marks
     }
 
   return nMarginWidth;
@@ -6206,7 +6303,7 @@ OnSourceType (UINT nId)
 void CCrystalTextView::
 OnUpdateSourceType (CCmdUI * pCmdUI)
 {
-  pCmdUI->SetRadio (CrystalLineParser::m_SourceDefs + (pCmdUI->m_nID - ID_SOURCE_PLAIN) == m_CurSourceDef);
+  pCmdUI->SetRadio (&CrystalLineParser::m_SourceDefs[(pCmdUI->m_nID - ID_SOURCE_PLAIN)] == m_CurSourceDef);
 }
 
 int
@@ -6432,6 +6529,11 @@ OnUpdateToggleSourceHeader (CCmdUI * pCmdUI)
 void CCrystalTextView::
 OnToggleSourceHeader ()
 {
+  auto FileExist = [](const tchar_t* lpszPath) -> bool
+    {
+      CFileStatus status;
+      return CFile::GetStatus(lpszPath, status) != 0;
+    };
   if (m_CurSourceDef->type == CrystalLineParser::SRC_C)
     {
       CDocument *pDoc = GetDocument ();
@@ -6888,7 +6990,8 @@ CString CCrystalTextView::GetTextBufferEol(int nLine) const
 
 void CCrystalTextView::SetMarkersContext(CCrystalTextMarkers * pMarkers)
 {
-  pMarkers->AddView(this);
+  if (pMarkers)
+    pMarkers->AddView(this);
   m_pMarkers = pMarkers;
 }
 
@@ -6950,8 +7053,20 @@ void CCrystalTextView::EnsureVisible (CEPoint ptStart, CEPoint ptEnd)
   //BEGIN SW
   int nSubLineCount = GetSubLineCount();
   int nNewTopSubLine = m_nTopSubLine;
-  CEPoint subLinePos;
 
+  if (ptStart != ptEnd)
+    {
+      CEPoint subLinePosEnd;
+      CharPosToPoint(ptEnd.y, ptEnd.x, subLinePosEnd);
+      subLinePosEnd.y += GetSubLineIndex(ptEnd.y);
+
+      if (subLinePosEnd.y >= nNewTopSubLine + GetScreenLines())
+          nNewTopSubLine = subLinePosEnd.y - GetScreenLines() + 1;
+      if (subLinePosEnd.y < nNewTopSubLine)
+          nNewTopSubLine = subLinePosEnd.y;
+    }
+
+  CEPoint subLinePos;
   CharPosToPoint( ptStart.y, ptStart.x, subLinePos );
   subLinePos.y += GetSubLineIndex( ptStart.y );
 

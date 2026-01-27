@@ -7,10 +7,10 @@
 
 #include "stdafx.h"
 #include "WebPageDiffFrm.h"
+#include "FrameWndHelper.h"
 #include "Merge.h"
 #include "MainFrm.h"
-#include "BCMenu.h"
-#include "DirDoc.h"
+#include "IDirDoc.h"
 #include "OptionsDef.h"
 #include "OptionsMgr.h"
 #include "OptionsDiffColors.h"
@@ -24,7 +24,11 @@
 #include "FileLocation.h"
 #include "Constants.h"
 #include "Environment.h"
+#include "UniFile.h"
+#include "Logger.h"
 #include <Poco/RegularExpression.h>
+#include <Poco/Exception.h>
+#include "DarkModeLib.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -65,7 +69,8 @@ BEGIN_MESSAGE_MAP(CWebPageDiffFrame, CMergeFrameCommon)
 	ON_WM_DESTROY()
 	ON_WM_MDIACTIVATE()
 	ON_WM_SIZE()
-	ON_WM_SETFOCUS ()	
+	ON_WM_SETFOCUS()
+	ON_WM_SETTINGCHANGE()
 	ON_MESSAGE_VOID(WM_IDLEUPDATECMDUI, OnIdleUpdateCmdUI)
 	ON_MESSAGE(MSG_STORE_PANESIZES, OnStorePaneSizes)
 	// [File] menu
@@ -107,6 +112,8 @@ BEGIN_MESSAGE_MAP(CWebPageDiffFrame, CMergeFrameCommon)
 	ON_COMMAND(ID_PREVCONFLICT, OnPrevConflict)
 	ON_UPDATE_COMMAND_UI(ID_PREVCONFLICT, OnUpdatePrevConflict)
 	// [Web] menu
+	ON_COMMAND(ID_WEB_VIEWDIFFERENCES, OnWebViewDifferences)
+	ON_UPDATE_COMMAND_UI(ID_WEB_VIEWDIFFERENCES, OnUpdateWebViewDifferences)
 	ON_COMMAND(ID_WEB_SIZE_FIT_TO_WINDOW, OnWebFitToWindow)
 	ON_UPDATE_COMMAND_UI(ID_WEB_SIZE_FIT_TO_WINDOW, OnUpdateWebFitToWindow)
 	ON_COMMAND_RANGE(ID_WEB_SIZE_320x512, ID_WEB_SIZE_1440x900, OnWebSize)
@@ -114,9 +121,11 @@ BEGIN_MESSAGE_MAP(CWebPageDiffFrame, CMergeFrameCommon)
 	ON_COMMAND(ID_WEB_COMPARE_HTMLS, OnWebCompareHTMLs)
 	ON_COMMAND(ID_WEB_COMPARE_TEXTS, OnWebCompareTexts)
 	ON_COMMAND(ID_WEB_COMPARE_RESOURCETREES, OnWebCompareResourceTrees)
+	ON_COMMAND_RANGE(ID_WEB_SYNC_ENABLED, ID_WEB_SYNC_GOBACKFORWARD, OnWebSyncEvent)
+	ON_UPDATE_COMMAND_UI_RANGE(ID_WEB_SYNC_ENABLED, ID_WEB_SYNC_GOBACKFORWARD, OnUpdateWebSyncEvent)
 	ON_COMMAND_RANGE(ID_WEB_CLEAR_DISK_CACHE, ID_WEB_CLEAR_ALL_PROFILE, OnWebClear)
 	// [Tools] menu
-//	ON_COMMAND(ID_TOOLS_GENERATEREPORT, OnToolsGenerateReport)
+	ON_COMMAND(ID_TOOLS_GENERATEREPORT, OnToolsGenerateReport)
 	// [Plugins] menu
 	ON_COMMAND_RANGE(ID_UNPACKERS_FIRST, ID_UNPACKERS_LAST, OnFileRecompareAs)
 	ON_COMMAND(ID_OPEN_WITH_UNPACKER, OnOpenWithUnpacker)
@@ -124,19 +133,6 @@ BEGIN_MESSAGE_MAP(CWebPageDiffFrame, CMergeFrameCommon)
 	ON_COMMAND_RANGE(ID_NEXT_PANE, ID_PREV_PANE, OnWindowChangePane)
 	// [Help] menu
 	ON_COMMAND(ID_HELP, OnHelp)
-	// Dialog bar
-	ON_BN_CLICKED(IDC_FITTOWINDOW, OnBnClickedFitToWindow)
-	ON_BN_CLICKED(IDC_SHOWDIFFERENCES, OnBnClickedShowDifferences)
-	ON_BN_CLICKED(IDC_COMPARE, OnBnClickedCompare)
-	ON_EN_CHANGE(IDC_WIDTH, OnEnChangeWidth)
-	ON_EN_CHANGE(IDC_HEIGHT, OnEnChangeHeight)
-	ON_EN_CHANGE(IDC_ZOOM, OnEnChangeZoom)
-	ON_EN_CHANGE(IDC_USERAGENT, OnEnChangeUserAgent)
-	ON_EN_KILLFOCUS(IDC_WIDTH, OnKillFocusBarControls)
-	ON_EN_KILLFOCUS(IDC_HEIGHT, OnKillFocusBarControls)
-	ON_EN_KILLFOCUS(IDC_ZOOM, OnKillFocusBarControls)
-	ON_EN_KILLFOCUS(IDC_USERAGENT, OnKillFocusBarControls)
-	ON_NOTIFY(BCN_DROPDOWN, IDC_COMPARE, OnDropDownCompare)
 	// Status bar
 	ON_UPDATE_COMMAND_UI(ID_STATUS_DIFFNUM, OnUpdateStatusNum)
 	//}}AFX_MSG_MAP
@@ -152,11 +148,10 @@ CWebPageDiffFrame::CWebPageDiffFrame()
 , m_pDirDoc(nullptr)
 , m_bAutoMerged(false)
 , m_pWebDiffWindow(nullptr)
-//, m_pWebToolWindow(nullptr)
+, m_pWebToolWindow(nullptr)
 , m_nBufferType{BUFFERTYPE::NORMAL, BUFFERTYPE::NORMAL, BUFFERTYPE::NORMAL}
 , m_bRO{}
 , m_nActivePane(-1)
-, m_bInUpdateWebPageDiffBar(false)
 , m_bCompareCompleted(false)
 {
 }
@@ -176,22 +171,24 @@ CWebPageDiffFrame::~CWebPageDiffFrame()
 	{
 		bool (*pfnWinWebDiff_DestroyWindow)(IWebDiffWindow *) = 
 			(bool (*)(IWebDiffWindow *))GetProcAddress(hModule, "WinWebDiff_DestroyWindow");
-//		bool (*pfnWinWebDiff_DestroyToolWindow)(IWebToolWindow *) = 
-//			(bool (*)(IWebToolWindow *))GetProcAddress(hModule, "WinWebDiff_DestroyToolWindow");
-		if (pfnWinWebDiff_DestroyWindow != nullptr/* && pfnWinWebDiff_DestroyToolWindow != nullptr*/)
+		bool (*pfnWinWebDiff_DestroyToolWindow)(IWebToolWindow *) = 
+			(bool (*)(IWebToolWindow *))GetProcAddress(hModule, "WinWebDiff_DestroyToolWindow");
+		if (pfnWinWebDiff_DestroyWindow != nullptr && pfnWinWebDiff_DestroyToolWindow != nullptr)
 		{
 			if (m_pWebDiffWindow != nullptr)
 				pfnWinWebDiff_DestroyWindow(m_pWebDiffWindow);
-//			if (m_pWebToolWindow != nullptr)
-//				pfnWinWebDiff_DestroyToolWindow(m_pWebToolWindow);
+			if (m_pWebToolWindow != nullptr)
+				pfnWinWebDiff_DestroyToolWindow(m_pWebToolWindow);
 			m_pWebDiffWindow = nullptr;
-//			m_pWebToolWindow = nullptr;
+			m_pWebToolWindow = nullptr;
 		}
 	}
 }
 
 bool CWebPageDiffFrame::OpenDocs(int nFiles, const FileLocation fileloc[], const bool bRO[], const String strDesc[], CMDIFrameWnd *pParent, std::function<void ()> callback)
 {
+	CMergeFrameCommon::LogComparisonStart(nFiles, fileloc, strDesc, &m_infoUnpacker, nullptr);
+
 	m_callbackOnOpenCompleted = callback;
 	m_bCompareCompleted = false;
 	
@@ -200,10 +197,18 @@ bool CWebPageDiffFrame::OpenDocs(int nFiles, const FileLocation fileloc[], const
 	for (int pane = 0; pane < nFiles; ++pane)
 	{
 		m_filePaths.SetPath(pane, fileloc[pane].filepath, false);
+		if (paths::isFileURL(m_filePaths[pane]))
+			m_filePaths[pane] = paths::FromURL(m_filePaths[pane]);
 		m_bRO[pane] = bRO[pane];
 		m_strDesc[pane] = strDesc ? strDesc[pane] : _T("");
-		if (fileloc[pane].filepath.empty())
+		if (fileloc[pane].filepath.empty() || paths::IsNullDeviceName(fileloc[pane].filepath))
+		{
 			m_nBufferType[pane] = BUFFERTYPE::UNNAMED;
+			if (m_strDesc[pane].empty())
+				m_strDesc[pane] = (pane == 0) ? _("Untitled Left") : ((nFiles < 3 || pane == 2) ? _("Untitled Right") : _("Untitled Middle"));
+			if (paths::IsNullDeviceName(fileloc[pane].filepath))
+				m_filePaths.SetPath(pane, _T("about:blank"), false);
+		}
 		else
 		{
 			m_nBufferType[pane] = (!strDesc || strDesc[pane].empty()) ? BUFFERTYPE::NORMAL : BUFFERTYPE::NORMAL_NAMED;
@@ -249,7 +254,7 @@ void CWebPageDiffFrame::MoveOnLoad(int nPane, int)
 /**
  * @brief DirDoc gives us its identity just after it creates us
  */
-void CWebPageDiffFrame::SetDirDoc(CDirDoc * pDirDoc)
+void CWebPageDiffFrame::SetDirDoc(IDirDoc * pDirDoc)
 {
 	ASSERT(pDirDoc != nullptr && m_pDirDoc == nullptr);
 	m_pDirDoc = pDirDoc;
@@ -258,6 +263,8 @@ void CWebPageDiffFrame::SetDirDoc(CDirDoc * pDirDoc)
 IMergeDoc::FileChange CWebPageDiffFrame::IsFileChangedOnDisk(int pane) const
 {
 	DiffFileInfo dfi;
+	if (paths::IsURL(m_filePaths[pane]))
+		return FileChange::NoChange;
 	if (!dfi.Update(m_filePaths[pane]))
 		return FileChange::Removed;
 	int tolerance = 0;
@@ -278,7 +285,7 @@ void CWebPageDiffFrame::CheckFileChanged(void)
 	{
 		if (IsFileChangedOnDisk(pane) == FileChange::Changed)
 		{
-			String msg = strutils::format_string1(_("Another application has updated file\n%1\nsince WinMerge scanned it last time.\n\nDo you want to reload the file?"), m_filePaths[pane]);
+			String msg = strutils::format_string1(_("Another application updated\n%1\nsince last scan.\n\nReload?"), m_filePaths[pane]);
 			if (AfxMessageBox(msg.c_str(), MB_YESNO | MB_ICONWARNING | MB_DONT_ASK_AGAIN, IDS_FILECHANGED_RESCAN) == IDYES)
 			{
 				OnFileReload();
@@ -320,16 +327,26 @@ void CWebPageDiffFrame::OnWebDiffEvent(const WebDiffEvent& event)
 			m_nBufferType[event.pane] = BUFFERTYPE::NORMAL;
 			m_strDesc[event.pane].clear();
 		}
-		String curUrl = m_pWebDiffWindow->GetCurrentUrl(event.pane);
+		const String curUrl = m_pWebDiffWindow->GetCurrentUrl(event.pane);
 		if (!isTempFile(curUrl) && curUrl != _T("about:blank"))
 		{
 			m_filePaths[event.pane] = paths::isFileURL(curUrl) ? paths::FromURL(curUrl) : curUrl;
 			UpdateHeaderPath(event.pane);
 		}
+		RootLogger::Info(strutils::format(_T("%s event: (pane: %d, url: %s)"),
+			(event.type == WebDiffEvent::SourceChanged) ? _T("SourceChanged") : _T("TabChanged"),
+			event.pane, m_filePaths[event.pane]));
 		break;
 	}
-	case WebDiffEvent::ZoomFactorChanged:
-		UpdateWebPageDiffBar();
+	case WebDiffEvent::CompareStateChanged:
+		UpdateLastCompareResult();
+		break;
+	case WebDiffEvent::CompareScreenshotsSelected:
+	case WebDiffEvent::CompareFullsizeScreenshotsSelected:
+	case WebDiffEvent::CompareHTMLsSelected:
+	case WebDiffEvent::CompareTextsSelected:
+	case WebDiffEvent::CompareResourceTreesSelected:
+		PostMessage(WM_COMMAND, ID_WEB_COMPARE_SCREENSHOTS + event.type - WebDiffEvent::CompareScreenshotsSelected, 0);
 		break;
 	}
 }
@@ -370,8 +387,9 @@ bool CWebPageDiffFrame::MatchURLPattern(const String& url)
 		Poco::RegularExpression reExclude(ucr::toUTF8(excludePattern));
 		return !reExclude.match(textu8);
 	}
-	catch (...)
+	catch (Poco::RegularExpressionException& e)
 	{
+		RootLogger::Error(e.displayText());
 		return false;
 	}
 }
@@ -382,12 +400,12 @@ bool CWebPageDiffFrame::MatchURLPattern(const String& url)
 BOOL CWebPageDiffFrame::OnCreateClient(LPCREATESTRUCT /*lpcs*/,
 	CCreateContext* pContext)
 {
-	if (!IsLoadable())
+	HMODULE hModule = nullptr;
+	if (!IsLoadable() || (hModule = GetModuleHandleW(L"WinWebDiffLib.dll")) == nullptr)
+	{
+		RootLogger::Error(_T("Failed to load WinWebDiffLib.dll"));
 		return FALSE;
-
-	HMODULE hModule = GetModuleHandleW(L"WinWebDiffLib.dll");
-	if (hModule == nullptr)
-		return FALSE;
+	}
 
 	IWebDiffWindow * (*pfnWinWebDiff_CreateWindow)(HINSTANCE hInstance, HWND hWndParent, int nID) =
 		(IWebDiffWindow * (*)(HINSTANCE hInstance, HWND hWndParent, int nID))GetProcAddress(hModule, "WinWebDiff_CreateWindow");
@@ -398,9 +416,27 @@ BOOL CWebPageDiffFrame::OnCreateClient(LPCREATESTRUCT /*lpcs*/,
 		return FALSE;
 	}
 
+	m_pWebDiffWindow->SetLogCallback(
+		([](IWebDiffWindow::LogLevel level, const wchar_t* msg)
+			{
+				switch (level)
+				{
+				case IWebDiffWindow::LogLevel::ERR:
+					RootLogger::Error(msg);
+					break;
+				case IWebDiffWindow::LogLevel::WARN:
+					RootLogger::Warn(msg);
+					break;
+				default:
+					RootLogger::Info(msg);
+					break;
+				}
+			})
+	);
+
 	if (!m_pWebDiffWindow->IsWebView2Installed())
 	{
-		if (IDYES == AfxMessageBox(_("WebView2 runtime is not installed. Do you want to download it?").c_str(), MB_ICONWARNING | MB_YESNO))
+		if (IDYES == AfxMessageBox(_("WebView2 runtime not installed. Download it?").c_str(), MB_ICONWARNING | MB_YESNO))
 		{
 			m_pWebDiffWindow->DownloadWebView2();
 		}
@@ -430,7 +466,7 @@ BOOL CWebPageDiffFrame::OnCreateClient(LPCREATESTRUCT /*lpcs*/,
 					++nNormalBuffer;
 			}
 			if (nNormalBuffer == 0)
-				UpdateDiffItem(m_pDirDoc);
+				UpdateLastCompareResult();
 
 			if (GetOptionsMgr()->GetBool(OPT_SCROLL_TO_FIRST))
 				m_pWebDiffWindow->FirstDiff();
@@ -441,6 +477,9 @@ BOOL CWebPageDiffFrame::OnCreateClient(LPCREATESTRUCT /*lpcs*/,
 				m_callbackOnOpenCompleted = nullptr;
 			}
 			m_bCompareCompleted = true;
+
+			CMergeFrameCommon::LogComparisonCompleted(*this);
+
 			return S_OK;
 		});
 	bool bResult;
@@ -452,39 +491,57 @@ BOOL CWebPageDiffFrame::OnCreateClient(LPCREATESTRUCT /*lpcs*/,
 	bResult = OpenUrls(callback);
 
 	for (int pane = 0; pane < m_filePaths.GetSize(); ++pane)
-	{
 		m_fileInfo[pane].Update(m_filePaths[pane]);
-	}
 
 	// Merge frame has also a dockable bar at the very left
 	// This is not the client area, but we create it now because we want
 	// to use the CCreateContext
-//	String sCaption = theApp.LoadString(IDS_LOCBAR_CAPTION);
-//	if (!m_wndLocationBar.Create(this, sCaption.c_str(), WS_CHILD | WS_VISIBLE, ID_VIEW_LOCATION_BAR))
-//	{
-//		TRACE0("Failed to create LocationBar\n");
-//		return FALSE;
-//	}
-//
-//	IWebToolWindow * (*pfnWinWebDiff_CreateToolWindow)(HINSTANCE hInstance, HWND hWndParent, IWebDiffWindow *) =
-//		(IWebToolWindow * (*)(HINSTANCE hInstance, HWND hWndParent, IWebDiffWindow *pWebPageDiffWindow))GetProcAddress(hModule, "WinWebDiff_CreateToolWindow");
-//	if (pfnWinWebDiff_CreateToolWindow == nullptr ||
-//		(m_pWebToolWindow = pfnWinWebDiff_CreateToolWindow(hModule, m_wndLocationBar.m_hWnd, m_pWebDiffWindow)) == nullptr)
-//	{
-//		return FALSE;
-//	}
-//
-//	m_pWebToolWindow->Translate(TranslateLocationPane);
-//
-//	m_wndLocationBar.SetFrameHwnd(GetSafeHwnd());
+	String sCaption = I18n::LoadString(IDS_LOCBAR_CAPTION);
+	if (!m_wndLocationBar.Create(this, sCaption.c_str(), WS_CHILD | WS_VISIBLE, ID_VIEW_LOCATION_BAR))
+	{
+		TRACE0("Failed to create LocationBar\n");
+		return FALSE;
+	}
 
+	IWebToolWindow * (*pfnWinWebDiff_CreateToolWindow)(HINSTANCE hInstance, HWND hWndParent, IWebDiffWindow *) =
+		(IWebToolWindow * (*)(HINSTANCE hInstance, HWND hWndParent, IWebDiffWindow *pWebPageDiffWindow))GetProcAddress(hModule, "WinWebDiff_CreateToolWindow");
+	if (pfnWinWebDiff_CreateToolWindow == nullptr ||
+		(m_pWebToolWindow = pfnWinWebDiff_CreateToolWindow(hModule, m_wndLocationBar.m_hWnd, m_pWebDiffWindow)) == nullptr)
+	{
+		return FALSE;
+	}
+
+	m_pWebToolWindow->Translate(TranslateLocationPane);
+
+	m_wndLocationBar.SetFrameHwnd(GetSafeHwnd());
+	m_pWebDiffWindow->SetDarkBackgroundEnabled(DarkMode::isEnabled());
+	for (int pane = 0; pane < m_pWebDiffWindow->GetPaneCount(); ++pane)
+	{
+		HWND hWnd = m_pWebDiffWindow->GetPaneHWND(pane);
+		if (hWnd != nullptr)
+		{
+			DarkMode::setWindowCtlColorSubclass(hWnd);
+			DarkMode::setWindowNotifyCustomDrawSubclass(hWnd);
+			DarkMode::setChildCtrlsSubclassAndThemeEx(hWnd, true, true);
+			CWnd* pToolbar = FindWindowEx(hWnd, nullptr, TOOLBARCLASSNAME, nullptr);
+			if (pToolbar)
+				DarkMode::setWindowCtlColorSubclass(pToolbar->GetSafeHwnd());
+		}
+	}
+	HWND hPane = m_pWebToolWindow->GetHWND();
+	if (hPane != nullptr)
+	{
+		DarkMode::setWindowCtlColorSubclass(hPane);
+		DarkMode::setWindowNotifyCustomDrawSubclass(hPane);
+		DarkMode::setChildCtrlsSubclassAndThemeEx(hPane, true, true);
+	}
 	return TRUE;
 }
 
-//void CWebPageDiffFrame::TranslateLocationPane(int id, const wchar_t *org, size_t dstbufsize, wchar_t *dst)
-//{
-//	swprintf_s(dst, dstbufsize, L"%s", tr("WebPageDiffFrame|LocationPane", ucr::toUTF8(org)).c_str());
-//}
+void CWebPageDiffFrame::TranslateLocationPane(int id, const wchar_t *org, size_t dstbufsize, wchar_t *dst)
+{
+	swprintf_s(dst, dstbufsize, L"%s", I18n::tr(ucr::toUTF8(org)).c_str());
+}
 
 /////////////////////////////////////////////////////////////////////////////
 // CWebPageDiffFrame message handlers
@@ -496,16 +553,14 @@ int CWebPageDiffFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 
 	EnableDocking(CBRS_ALIGN_TOP | CBRS_ALIGN_BOTTOM | CBRS_ALIGN_LEFT | CBRS_ALIGN_RIGHT);
 
-	CMergeFrameCommon::RemoveBarBorder();
+	FrameWndHelper::RemoveBarBorder(this);
 
 	// Merge frame has a header bar at top
-	if (!m_wndWebPageDiffBar.Create(this) || !m_wndFilePathBar.Create(this))
+	if (!m_wndFilePathBar.Create(this))
 	{
 		TRACE0("Failed to create dialog bar\n");
 		return -1;      // fail to create
 	}
-
-	UpdateWebPageDiffBar();
 
 	m_wndFilePathBar.SetPaneCount(m_pWebDiffWindow->GetPaneCount());
 	m_wndFilePathBar.SetOnSetFocusCallback([&](int pane) {
@@ -513,67 +568,41 @@ int CWebPageDiffFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 			m_pWebDiffWindow->SetActivePane(pane);
 	});
 	m_wndFilePathBar.SetOnCaptionChangedCallback([&](int pane, const String& sText) {
-		m_strDesc[pane] = sText;
-		UpdateHeaderPath(pane);
+		if (m_strDesc[pane] != sText)
+		{
+			m_strDesc[pane] = sText;
+			if (m_nBufferType[pane] == BUFFERTYPE::NORMAL)
+				m_nBufferType[pane] = BUFFERTYPE::NORMAL_NAMED;
+			UpdateHeaderPath(pane);
+		}
+		m_pWebDiffWindow->SetActivePane(pane);
 	});
 
 	// Merge frame also has a dockable bar at the very left
 	// created in OnCreateClient 
-	//m_wndLocationBar.SetBarStyle(m_wndLocationBar.GetBarStyle() |
-	//	CBRS_SIZE_DYNAMIC | CBRS_ALIGN_LEFT);
-	//m_wndLocationBar.EnableDocking(CBRS_ALIGN_LEFT | CBRS_ALIGN_RIGHT);
-	//DockControlBar(&m_wndLocationBar, AFX_IDW_DOCKBAR_LEFT);
+	m_wndLocationBar.SetBarStyle(m_wndLocationBar.GetBarStyle() |
+		CBRS_SIZE_DYNAMIC | CBRS_ALIGN_LEFT);
+	m_wndLocationBar.EnableDocking(CBRS_ALIGN_LEFT | CBRS_ALIGN_RIGHT);
+	DockControlBar(&m_wndLocationBar, AFX_IDW_DOCKBAR_LEFT);
 
 	for (int nPane = 0; nPane < m_pWebDiffWindow->GetPaneCount(); nPane++)
 	{
 		m_wndFilePathBar.SetActive(nPane, FALSE);
-//		CreateWebWndStatusBar(m_wndStatusBar[nPane], CWnd::FromHandle(m_pWebDiffWindow->GetPaneHWND(nPane)));
+		//CreateWebWndStatusBar(m_wndStatusBar[nPane], CWnd::FromHandle(m_pWebDiffWindow->GetPaneHWND(nPane)));
 		UpdateHeaderPath(nPane);
 	}
 
-//	CSize size = m_wndStatusBar[0].CalcFixedLayout(TRUE, TRUE);
-//	m_rectBorder.bottom = size.cy;
+	//CSize size = m_wndStatusBar[0].CalcFixedLayout(TRUE, TRUE);
+	//m_rectBorder.bottom = size.cy;
 
 	CDockState pDockState;
 	pDockState.LoadState(_T("Settings-WebPageDiffFrame"));
-	if (EnsureValidDockState(pDockState)) // checks for valid so won't ASSERT
+	if (FrameWndHelper::EnsureValidDockState(this, pDockState)) // checks for valid so won't ASSERT
 		SetDockState(pDockState);
 	// for the dimensions of the diff and location pane, use the CSizingControlBar loader
-	//m_wndLocationBar.LoadState(_T("Settings-WebPageDiffFrame"));
+	m_wndLocationBar.LoadState(_T("Settings-WebPageDiffFrame"));
 
 	return 0;
-}
-
-/**
-* @brief We must use this function before a call to SetDockState
-*
-* @note Without this, SetDockState will assert or crash if a bar from the
-* CDockState is missing in the current CMergeEditFrame.
-* The bars are identified with their ID. This means the missing bar bug is triggered
-* when we run WinMerge after changing the ID of a bar.
-*/
-bool CWebPageDiffFrame::EnsureValidDockState(CDockState& state)
-{
-	for (int i = (int)state.m_arrBarInfo.GetSize() - 1; i >= 0; i--)
-	{
-		bool barIsCorrect = true;
-		CControlBarInfo* pInfo = (CControlBarInfo*)state.m_arrBarInfo[i];
-		if (pInfo == nullptr)
-			barIsCorrect = false;
-		else
-		{
-			if (!pInfo->m_bFloating)
-			{
-				pInfo->m_pBar = GetControlBar(pInfo->m_nBarID);
-				if (pInfo->m_pBar == nullptr)
-					barIsCorrect = false; //toolbar id's probably changed	
-			}
-		}
-
-		if (!barIsCorrect)
-			state.m_arrBarInfo.RemoveAt(i);
-	}
-	return true;
 }
 
 /**
@@ -602,6 +631,8 @@ void CWebPageDiffFrame::LoadOptions()
 	m_pWebDiffWindow->SetShowDifferences(GetOptionsMgr()->GetBool(OPT_CMP_WEB_SHOWDIFFERENCES));
 	m_pWebDiffWindow->SetShowWordDifferences(GetOptionsMgr()->GetBool(OPT_WORDDIFF_HIGHLIGHT));
 	m_pWebDiffWindow->SetUserAgent(GetOptionsMgr()->GetString(OPT_CMP_WEB_USER_AGENT).c_str());
+	m_pWebDiffWindow->SetSyncEvents(GetOptionsMgr()->GetBool(OPT_CMP_WEB_SYNC_EVENTS));
+	m_pWebDiffWindow->SetSyncEventFlags(GetOptionsMgr()->GetInt(OPT_CMP_WEB_SYNC_EVENT_FLAGS));
 	COLORSETTINGS colors;
 	IWebDiffWindow::ColorSettings colorSettings;
 	Options::DiffColors::Load(GetOptionsMgr(), colors);
@@ -636,7 +667,6 @@ void CWebPageDiffFrame::LoadOptions()
 
 void CWebPageDiffFrame::SaveOptions()
 {
-	//	GetOptionsMgr()->SaveOption(OPT_CMP_WEB_DIFFCOLORALPHA, static_cast<int>(m_pWebDiffWindow->GetDiffColorAlpha() * 100.0));
 	SIZE size = m_pWebDiffWindow->GetSize();
 	GetOptionsMgr()->SaveOption(OPT_CMP_WEB_VIEW_WIDTH, size.cx);
 	GetOptionsMgr()->SaveOption(OPT_CMP_WEB_VIEW_HEIGHT, size.cy);
@@ -644,6 +674,8 @@ void CWebPageDiffFrame::SaveOptions()
 	GetOptionsMgr()->SaveOption(OPT_CMP_WEB_SHOWDIFFERENCES, m_pWebDiffWindow->GetShowDifferences());
 	GetOptionsMgr()->SaveOption(OPT_CMP_WEB_ZOOM, static_cast<int>(m_pWebDiffWindow->GetZoom() * 1000));
 	GetOptionsMgr()->SaveOption(OPT_CMP_WEB_USER_AGENT, m_pWebDiffWindow->GetUserAgent());
+	GetOptionsMgr()->SaveOption(OPT_CMP_WEB_SYNC_EVENTS, m_pWebDiffWindow->GetSyncEvents());
+	GetOptionsMgr()->SaveOption(OPT_CMP_WEB_SYNC_EVENT_FLAGS, m_pWebDiffWindow->GetSyncEventFlags());
 }
 
 /**
@@ -663,7 +695,7 @@ void CWebPageDiffFrame::SavePosition()
 	GetDockState(m_pDockState);
 	m_pDockState.SaveState(_T("Settings-WebPageDiffFrame"));
 	// for the dimensions of the diff pane, use the CSizingControlBar save
-	//m_wndLocationBar.SaveState(_T("Settings-WebPageDiffFrame"));
+	m_wndLocationBar.SaveState(_T("Settings-WebPageDiffFrame"));
 }
 
 void CWebPageDiffFrame::SaveActivePane()
@@ -789,7 +821,8 @@ void CWebPageDiffFrame::UpdateHeaderPath(int pane)
 			m_pDirDoc->ApplyDisplayRoot(pane, sText);
 	}
 
-	m_wndFilePathBar.SetText(pane, sText.c_str());
+	m_wndFilePathBar.SetCaption(pane, sText);
+	m_wndFilePathBar.SetPath(pane, m_filePaths.GetPath(pane));
 
 	SetTitle(nullptr);
 }
@@ -820,9 +853,9 @@ void CWebPageDiffFrame::UpdateHeaderSizes()
 				w[pane] = rcMergeWindow.Width() / nPaneCount - 4;
 		}
 
-		if (!std::equal(m_nLastSplitPos, m_nLastSplitPos + nPaneCount - 1, w))
+		if (!std::equal(m_nLastSplitPos, m_nLastSplitPos + nPaneCount, w))
 		{
-			std::copy_n(w, nPaneCount - 1, m_nLastSplitPos);
+			std::copy_n(w, nPaneCount, m_nLastSplitPos);
 
 			// resize controls in header dialog bar
 			m_wndFilePathBar.Resize(w);
@@ -845,7 +878,7 @@ void CWebPageDiffFrame::UpdateHeaderSizes()
  */
 void CWebPageDiffFrame::SetTitle(LPCTSTR lpszTitle)
 {
-	String sTitle = (lpszTitle != nullptr) ? lpszTitle : CMergeFrameCommon::GetTitleString(m_filePaths, m_strDesc, &m_infoUnpacker, nullptr);
+	String sTitle = (lpszTitle != nullptr) ? lpszTitle : CMergeFrameCommon::GetTitleString(*this);
 	CMergeFrameCommon::SetTitle(sTitle.c_str());
 	if (m_hWnd != nullptr)
 	{
@@ -854,10 +887,15 @@ void CWebPageDiffFrame::SetTitle(LPCTSTR lpszTitle)
 	}
 }
 
-void CWebPageDiffFrame::UpdateLastCompareResult()
+int CWebPageDiffFrame::UpdateLastCompareResult()
 {
+	int result = -1;
 	if (m_bCompareCompleted)
-		SetLastCompareResult(m_pWebDiffWindow->GetDiffCount() > 0 ? 1 : 0);
+	{
+		result = (m_pWebDiffWindow->GetCompareState() == IWebDiffWindow::COMPARED) ? (m_pWebDiffWindow->GetDiffCount() > 0 ? 1 : 0) : -1;
+		SetLastCompareResult(result);
+	}
+	return result;
 }
 
 void CWebPageDiffFrame::UpdateAutoPaneResize()
@@ -877,7 +915,7 @@ bool CWebPageDiffFrame::OpenUrls(IWebDiffCallback* callback)
 	for (int pane = 0; pane < m_filePaths.GetSize(); ++pane)
 	{
 		strTempFileName[pane] = m_filePaths[pane];
-		if (!m_infoUnpacker.Unpacking(&m_unpackerSubcodes[pane], strTempFileName[pane], filteredFilenames, {strTempFileName[pane]}))
+		if (!m_infoUnpacker.Unpacking(pane, &m_unpackerSubcodes[pane], strTempFileName[pane], filteredFilenames, {strTempFileName[pane]}))
 		{
 //			return false;
 		}
@@ -887,29 +925,6 @@ bool CWebPageDiffFrame::OpenUrls(IWebDiffCallback* callback)
 	else
 		bResult = SUCCEEDED(m_pWebDiffWindow->Open(ucr::toUTF16(strTempFileName[0]).c_str(), ucr::toUTF16(strTempFileName[1]).c_str(), ucr::toUTF16(strTempFileName[2]).c_str(), callback));
 	return bResult;
-}
-
-/**
- * @brief Update associated diff item
- */
-int CWebPageDiffFrame::UpdateDiffItem(CDirDoc *pDirDoc)
-{
-	// If directory compare has results
-	if (pDirDoc && pDirDoc->HasDiffs())
-	{
-// FIXME:
-//		const String &pathLeft = m_filePaths.GetLeft();
-//		const String &pathRight = m_filePaths.GetRight();
-//		CDiffContext &ctxt = const_cast<CDiffContext &>(pDirDoc->GetDiffContext());
-//		if (UINT_PTR pos = pDirDoc->FindItemFromPaths(pathLeft, pathRight))
-//		{
-//			DIFFITEM &di = pDirDoc->GetDiffRefByKey(pos);
-//			::UpdateDiffItem(m_nBuffers, di, &ctxt);
-//		}
-	}
-	int result = m_pWebDiffWindow->GetDiffCount() > 0 ? 1 : 0;
-	SetLastCompareResult(result != 0);
-	return result;
 }
 
 /// Document commanding us to close
@@ -924,7 +939,15 @@ bool CWebPageDiffFrame::CloseNow()
  */
 CString CWebPageDiffFrame::GetTooltipString() const
 {
-	return CMergeFrameCommon::GetTooltipString(m_filePaths, m_strDesc, &m_infoUnpacker, nullptr).c_str();
+	return CMergeFrameCommon::GetTooltipString(*this).c_str();
+}
+
+/**
+ * @brief Returns the number of differences found
+ */
+int CWebPageDiffFrame::GetDiffCount() const
+{
+	return m_pWebDiffWindow->GetDiffCount();
 }
 
 /**
@@ -932,7 +955,7 @@ CString CWebPageDiffFrame::GetTooltipString() const
  */
 void CWebPageDiffFrame::UpdateResources()
 {
-	//m_pWebToolWindow->Translate(TranslateLocationPane);
+	m_pWebToolWindow->Translate(TranslateLocationPane);
 }
 
 void CWebPageDiffFrame::RefreshOptions()
@@ -991,7 +1014,7 @@ BOOL CWebPageDiffFrame::PreTranslateMessage(MSG* pMsg)
 		if (pMsg->wParam == VK_ESCAPE && GetOptionsMgr()->GetInt(OPT_CLOSE_WITH_ESC) != 0)
 		{
 			PostMessage(WM_CLOSE, 0, 0);
-			return true;
+			return false;
 		}
 	}
 	return CMergeFrameCommon::PreTranslateMessage(pMsg);
@@ -1019,7 +1042,7 @@ void CWebPageDiffFrame::OnIdleUpdateCmdUI()
 		for (int pane = 0; pane < m_filePaths.GetSize(); ++pane)
 		{
 			// Update mod indicators
-			m_wndFilePathBar.SetActive(pane, pane == nActivePane);
+			m_wndFilePathBar.SetActive(pane, pane == m_nActivePane);
 		}
 		UpdateLastCompareResult();
 	}
@@ -1035,142 +1058,23 @@ LRESULT CWebPageDiffFrame::OnStorePaneSizes(WPARAM wParam, LPARAM lParam)
 	return 0;
 }
 
-void CWebPageDiffFrame::UpdateWebPageDiffBar()
-{
-	m_bInUpdateWebPageDiffBar = true;
-	bool fitToWindow = m_pWebDiffWindow->GetFitToWindow();
-	m_wndWebPageDiffBar.CheckDlgButton(IDC_FITTOWINDOW, fitToWindow);
-	m_wndWebPageDiffBar.CheckDlgButton(IDC_SHOWDIFFERENCES, m_pWebDiffWindow->GetShowDifferences());
-	m_wndWebPageDiffBar.GetDlgItem(IDC_WIDTH)->EnableWindow(!fitToWindow);
-	m_wndWebPageDiffBar.GetDlgItem(IDC_HEIGHT)->EnableWindow(!fitToWindow);
-	SIZE size = m_pWebDiffWindow->GetSize();
-	m_wndWebPageDiffBar.SetDlgItemText(IDC_WIDTH, strutils::format(_T("%d"), size.cx));
-	m_wndWebPageDiffBar.SetDlgItemText(IDC_HEIGHT, strutils::format(_T("%d"), size.cy));
-	m_wndWebPageDiffBar.SetDlgItemText(IDC_ZOOM, strutils::format(_T("%.1f%%"), 
-		m_pWebDiffWindow->GetZoom() * 100.0));
-	m_wndWebPageDiffBar.SetDlgItemText(IDC_USERAGENT, m_pWebDiffWindow->GetUserAgent());
-	m_bInUpdateWebPageDiffBar = false;
-}
-
-void CWebPageDiffFrame::OnBnClickedFitToWindow()
-{
-	m_pWebDiffWindow->SetFitToWindow(m_wndWebPageDiffBar.IsDlgButtonChecked(IDC_FITTOWINDOW));
-	UpdateWebPageDiffBar();
-}
-
-void CWebPageDiffFrame::OnBnClickedShowDifferences()
-{
-	m_pWebDiffWindow->SetShowDifferences(m_wndWebPageDiffBar.IsDlgButtonChecked(IDC_SHOWDIFFERENCES));
-	UpdateWebPageDiffBar();
-}
-
-void CWebPageDiffFrame::OnBnClickedCompare()
-{
-	OnRefresh();
-}
-
-void CWebPageDiffFrame::OnDropDownCompare(NMHDR *pNMHDR, LRESULT *pResult)
-{
-	CRect rc;
-	m_wndWebPageDiffBar.GetDlgItem(IDC_COMPARE)->GetWindowRect(&rc);
-	CPoint point { rc.left, rc.bottom };
-	BCMenu menuPopup;
-	menuPopup.LoadMenu(MAKEINTRESOURCE(IDR_POPUP_WEBPAGE_COMPARE));
-	theApp.TranslateMenu(menuPopup.m_hMenu);
-	BCMenu* pPopup = (BCMenu*)menuPopup.GetSubMenu(0);
-	pPopup->TrackPopupMenu(TPM_LEFTALIGN | TPM_RIGHTBUTTON,
-		point.x, point.y, AfxGetMainWnd());
-}
-
-void CWebPageDiffFrame::OnEnChangeWidth()
-{
-	if (m_bInUpdateWebPageDiffBar)
-		return;
-	String text;
-	m_wndWebPageDiffBar.GetDlgItemText(IDC_WIDTH, text);
-	int v = tc::ttoi(text.c_str());
-	if (v > 0 && v < 32678)
-	{
-		SIZE size = m_pWebDiffWindow->GetSize();
-		size.cx = v;
-		m_pWebDiffWindow->SetSize(size);
-	}
-}
-
-void CWebPageDiffFrame::OnEnChangeHeight()
-{
-	if (m_bInUpdateWebPageDiffBar)
-		return;
-	String text;
-	m_wndWebPageDiffBar.GetDlgItemText(IDC_HEIGHT, text);
-	int v = tc::ttoi(text.c_str());
-	if (v > 0 && v < 32678)
-	{
-		SIZE size = m_pWebDiffWindow->GetSize();
-		size.cy = v;
-		m_pWebDiffWindow->SetSize(size);
-	}
-}
-
-void CWebPageDiffFrame::OnEnChangeZoom()
-{
-	if (m_bInUpdateWebPageDiffBar)
-		return;
-	String text;
-	m_wndWebPageDiffBar.GetDlgItemText(IDC_ZOOM, text);
-	tchar_t* endptr = nullptr;
-	double v = tc::tcstod(text.c_str(), &endptr);
-	if ((* endptr == '\0' || *endptr == '%') && v >= 25.0 && v <= 500.0)
-		m_pWebDiffWindow->SetZoom(v / 100.0);
-}
-
-void CWebPageDiffFrame::OnEnChangeUserAgent()
-{
-	if (m_bInUpdateWebPageDiffBar)
-		return;
-	String text;
-	m_wndWebPageDiffBar.GetDlgItemText(IDC_USERAGENT, text);
-	m_pWebDiffWindow->SetUserAgent(text.c_str());
-}
-
-void CWebPageDiffFrame::OnKillFocusBarControls()
-{
-	UpdateWebPageDiffBar();
-	SaveOptions();
-	CString text;
-	m_wndFilePathBar.GetDlgItemTextW(IDC_USERAGENT, text);
-}
-
 void CWebPageDiffFrame::OnUpdateStatusNum(CCmdUI* pCmdUI) 
 {
 	tchar_t sIdx[32] = { 0 };
 	tchar_t sCnt[32] = { 0 };
 	String s;
-	const int nDiffs = m_pWebDiffWindow->GetDiffCount();
-	
-	// Files are identical - show text "Identical"
-	if (nDiffs <= 0)
-		s = theApp.LoadString(IDS_IDENTICAL);
-	
-	// There are differences, but no selected diff
-	// - show amount of diffs
-	else if (m_pWebDiffWindow->GetCurrentDiffIndex() < 0)
+	auto compareState = m_pWebDiffWindow->GetCompareState();
+
+	if (compareState == IWebDiffWindow::NOT_COMPARED)
 	{
-		s = theApp.LoadString(nDiffs == 1 ? IDS_1_DIFF_FOUND : IDS_NO_DIFF_SEL_FMT);
-		_itot_s(nDiffs, sCnt, 10);
-		strutils::replace(s, _T("%1"), sCnt);
 	}
-	
-	// There are differences and diff selected
-	// - show diff number and amount of diffs
+	else if (compareState == IWebDiffWindow::COMPARING)
+	{
+		s = I18n::LoadString(IDS_WEBPAGE_COMPARING);
+	}
 	else
 	{
-		s = theApp.LoadString(IDS_DIFF_NUMBER_STATUS_FMT);
-		const int signInd = m_pWebDiffWindow->GetCurrentDiffIndex();
-		_itot_s(signInd + 1, sIdx, 10);
-		strutils::replace(s, _T("%1"), sIdx);
-		_itot_s(nDiffs, sCnt, 10);
-		strutils::replace(s, _T("%2"), sCnt);
+		s = CMergeFrameCommon::GetDiffStatusString(m_pWebDiffWindow->GetCurrentDiffIndex(), m_pWebDiffWindow->GetDiffCount());
 	}
 	pCmdUI->SetText(s.c_str());
 }
@@ -1430,11 +1334,23 @@ void CWebPageDiffFrame::OnUpdatePrevConflict(CCmdUI* pCmdUI)
 	);
 }
 
+void CWebPageDiffFrame::OnWebViewDifferences()
+{
+	m_pWebDiffWindow->SetShowDifferences(!m_pWebDiffWindow->GetShowDifferences());
+	SaveOptions();
+	m_pWebToolWindow->Sync();
+}
+
+void CWebPageDiffFrame::OnUpdateWebViewDifferences(CCmdUI* pCmdUI)
+{
+	pCmdUI->SetCheck(m_pWebDiffWindow->GetShowDifferences());
+}
+
 void CWebPageDiffFrame::OnWebFitToWindow()
 {
 	m_pWebDiffWindow->SetFitToWindow(true);
 	SaveOptions();
-	UpdateWebPageDiffBar();
+	m_pWebToolWindow->Sync();
 }
 
 void CWebPageDiffFrame::OnUpdateWebFitToWindow(CCmdUI* pCmdUI)
@@ -1449,30 +1365,30 @@ void CWebPageDiffFrame::OnWebSize(UINT nID)
 	case ID_WEB_SIZE_320x512:
 		m_pWebDiffWindow->SetFitToWindow(false);
 		m_pWebDiffWindow->SetSize({ 320, 512 });
-		UpdateWebPageDiffBar();
+		m_pWebToolWindow->Sync();
 		break;
 	case ID_WEB_SIZE_375x600:
 		m_pWebDiffWindow->SetFitToWindow(false);
 		m_pWebDiffWindow->SetSize({ 375, 600 });
-		UpdateWebPageDiffBar();
+		m_pWebToolWindow->Sync();
 		break;
 	case ID_WEB_SIZE_1024x640:
 		m_pWebDiffWindow->SetFitToWindow(false);
 		m_pWebDiffWindow->SetSize({ 1024, 640 });
 		SaveOptions();
-		UpdateWebPageDiffBar();
+		m_pWebToolWindow->Sync();
 		break;
 	case ID_WEB_SIZE_1280x800:
 		m_pWebDiffWindow->SetFitToWindow(false);
 		m_pWebDiffWindow->SetSize({ 1280, 800 });
 		SaveOptions();
-		UpdateWebPageDiffBar();
+		m_pWebToolWindow->Sync();
 		break;
 	case ID_WEB_SIZE_1440x900:
 		m_pWebDiffWindow->SetFitToWindow(false);
 		m_pWebDiffWindow->SetSize({ 1440, 900 });
 		SaveOptions();
-		UpdateWebPageDiffBar();
+		m_pWebToolWindow->Sync();
 		break;
 	}
 }
@@ -1582,6 +1498,59 @@ void CWebPageDiffFrame::OnWebCompareResourceTrees()
 			}));
 }
 
+void CWebPageDiffFrame::OnWebSyncEvent(UINT nID)
+{
+	switch (nID)
+	{
+	case ID_WEB_SYNC_ENABLED:
+		m_pWebDiffWindow->SetSyncEvents(!m_pWebDiffWindow->GetSyncEvents());
+		GetOptionsMgr()->SaveOption(OPT_CMP_WEB_SYNC_EVENTS, m_pWebDiffWindow->GetSyncEvents());
+		break;
+	case ID_WEB_SYNC_SCROLL:
+		m_pWebDiffWindow->SetSyncEventFlag(IWebDiffWindow::EVENT_SCROLL,
+			!m_pWebDiffWindow->GetSyncEventFlag(IWebDiffWindow::EVENT_SCROLL));
+		GetOptionsMgr()->SaveOption(OPT_CMP_WEB_SYNC_EVENT_FLAGS, m_pWebDiffWindow->GetSyncEventFlags());
+		break;
+	case ID_WEB_SYNC_CLICK:
+		m_pWebDiffWindow->SetSyncEventFlag(IWebDiffWindow::EVENT_CLICK,
+			!m_pWebDiffWindow->GetSyncEventFlag(IWebDiffWindow::EVENT_CLICK));
+		GetOptionsMgr()->SaveOption(OPT_CMP_WEB_SYNC_EVENT_FLAGS, m_pWebDiffWindow->GetSyncEventFlags());
+		break;
+	case ID_WEB_SYNC_INPUT:
+		m_pWebDiffWindow->SetSyncEventFlag(IWebDiffWindow::EVENT_INPUT,
+			!m_pWebDiffWindow->GetSyncEventFlag(IWebDiffWindow::EVENT_INPUT));
+		GetOptionsMgr()->SaveOption(OPT_CMP_WEB_SYNC_EVENT_FLAGS, m_pWebDiffWindow->GetSyncEventFlags());
+		break;
+	case ID_WEB_SYNC_GOBACKFORWARD:
+		m_pWebDiffWindow->SetSyncEventFlag(IWebDiffWindow::EVENT_GOBACKFORWARD,
+			!m_pWebDiffWindow->GetSyncEventFlag(IWebDiffWindow::EVENT_GOBACKFORWARD));
+		GetOptionsMgr()->SaveOption(OPT_CMP_WEB_SYNC_EVENT_FLAGS, m_pWebDiffWindow->GetSyncEventFlags());
+		break;
+	}
+}
+
+void CWebPageDiffFrame::OnUpdateWebSyncEvent(CCmdUI* pCmdUI)
+{
+	switch (pCmdUI->m_nID)
+	{
+	case ID_WEB_SYNC_ENABLED:
+		pCmdUI->SetCheck(m_pWebDiffWindow->GetSyncEvents());
+		break;
+	case ID_WEB_SYNC_SCROLL:
+		pCmdUI->SetCheck(m_pWebDiffWindow->GetSyncEventFlag(IWebDiffWindow::EVENT_SCROLL));
+		break;
+	case ID_WEB_SYNC_CLICK:
+		pCmdUI->SetCheck(m_pWebDiffWindow->GetSyncEventFlag(IWebDiffWindow::EVENT_CLICK));
+		break;
+	case ID_WEB_SYNC_INPUT:
+		pCmdUI->SetCheck(m_pWebDiffWindow->GetSyncEventFlag(IWebDiffWindow::EVENT_INPUT));
+		break;
+	case ID_WEB_SYNC_GOBACKFORWARD:
+		pCmdUI->SetCheck(m_pWebDiffWindow->GetSyncEventFlag(IWebDiffWindow::EVENT_GOBACKFORWARD));
+		break;
+	}
+}
+
 void CWebPageDiffFrame::OnWebClear(UINT nID)
 {
 	IWebDiffWindow::BrowsingDataType dataKinds;
@@ -1599,24 +1568,101 @@ void CWebPageDiffFrame::OnWebClear(UINT nID)
 
 bool CWebPageDiffFrame::GenerateReport(const String& sFileName) const
 {
-	//return GenerateReport(sFileName, true);
-	return false;
+	bool result = false;
+	bool completed = false;
+	if (!GenerateReport(sFileName, [&completed, &result](bool res) { result = res; completed = true; }))
+		return false;
+	CMainFrame::WaitAndDoMessageLoop(completed, 0);
+	return result;
 }
-//
-///**
-// * @brief Generate report from file compare results.
-// */
-//bool CWebPageDiffFrame::GenerateReport(const String& sFileName, bool allPages) const
-//{
-//	return false;
-//}
-//
-///**
-// * @brief Generate report from file compare results.
-// */
-//void CWebPageDiffFrame::OnToolsGenerateReport()
-//{
-//}
+
+bool CWebPageDiffFrame::GenerateReport(const String& sFileName, std::function<void(bool)> callback) const
+{
+	String rptdir_full, rptdir, path, name, ext;
+	String title[3];
+	String diffrpt_filename[3];
+	String diffrpt_filename_full[3];
+	const wchar_t* pfilenames[3]{};
+	paths::SplitFilename(sFileName, &path, &name, &ext);
+	rptdir_full = paths::ConcatPath(path, name) + _T(".files");
+	rptdir = paths::FindFileName(rptdir_full);
+	paths::CreateIfNeeded(rptdir_full);
+
+	for (int pane = 0; pane < m_pWebDiffWindow->GetPaneCount(); ++pane)
+	{
+		title[pane] = m_strDesc[pane].empty() ? ucr::toTString(m_pWebDiffWindow->GetCurrentUrl(pane)) : m_strDesc[pane];
+		diffrpt_filename[pane] = strutils::format(_T("%s/%d.pdf"), rptdir, pane + 1);
+		diffrpt_filename_full[pane] = strutils::format(_T("%s/%d.pdf"), rptdir_full, pane + 1);
+		pfilenames[pane] = diffrpt_filename_full[pane].c_str();
+	}
+
+	UniStdioFile file;
+	if (!file.Open(sFileName, _T("wt")))
+	{
+		String errMsg = GetSysError(GetLastError());
+		String msg = strutils::format_string1(
+			_("Error creating the report:\n%1"), errMsg);
+		AfxMessageBox(msg.c_str(), MB_OK | MB_ICONSTOP);
+		return false;
+	}
+
+	file.SetCodepage(ucr::CP_UTF_8);
+
+	file.WriteString(
+		_T("<!DOCTYPE html>\n")
+		_T("<html>\n")
+		_T("<head>\n")
+		_T("<meta charset=\"UTF-8\">\n")
+		_T("<title>WinMerge Webpage Compare Report</title>\n")
+		_T("<style>\n")
+		_T("table { table-layout: fixed; width: 100%; border-collapse: collapse; }\n")
+		_T("th {position: sticky; top: 0;}\n")
+		_T("td,th { border: solid 1px black; }\n")
+		_T("embed { width: 100%; height: calc(100vh - 56px) }\n")
+		_T(".title { color: white; background-color: blue; vertical-align: top; padding: 4px 4px; background: linear-gradient(mediumblue, darkblue);}\n")
+		_T("</style>\n")
+		_T("</head>\n")
+		_T("<body>\n")
+		_T("<table>\n")
+		_T("<tr>\n"));
+	for (int pane = 0; pane < m_pWebDiffWindow->GetPaneCount(); ++pane)
+		file.WriteString(strutils::format(_T("<th class=\"title\">%s</th>\n"), title[pane]));
+	file.WriteString(_T("</tr>\n"));
+	file.WriteString(
+		_T("<tr>\n"));
+	for (int pane = 0; pane < m_pWebDiffWindow->GetPaneCount(); ++pane)
+		file.WriteString(
+			strutils::format(_T("<td><embed type=\"application/pdf\" src=\"%s\" title=\"%s\"></td>\n"),
+				paths::urlEncodeFileName(diffrpt_filename[pane]), diffrpt_filename[pane]));
+	file.WriteString(
+		_T("</tr>\n"));
+	file.WriteString(
+		_T("</table>\n")
+		_T("</body>\n")
+		_T("</html>\n"));
+
+	return SUCCEEDED(m_pWebDiffWindow->SaveDiffFiles(IWebDiffWindow::PDF, pfilenames, 
+		Callback<IWebDiffCallback>([this, callback](const WebDiffCallbackResult& result) -> HRESULT
+			{
+				callback(SUCCEEDED(result.errorCode));
+				return S_OK;
+			})));
+}
+
+/**
+ * @brief Generate report from file compare results.
+ */
+void CWebPageDiffFrame::OnToolsGenerateReport()
+{
+	String s;
+	CString folder;
+	if (!SelectFile(AfxGetMainWnd()->GetSafeHwnd(), s, false, folder, _T(""), _("HTML Files (*.htm,*.html)|*.htm;*.html|All Files (*.*)|*.*||"), _T("htm")))
+		return;
+
+	CWaitCursor waitstatus;
+	if (GenerateReport(s))
+		I18n::MessageBox(IDS_REPORT_SUCCESS, MB_OK | MB_ICONINFORMATION | MB_MODELESS);
+}
 
 void CWebPageDiffFrame::OnRefresh()
 {
@@ -1627,11 +1673,10 @@ void CWebPageDiffFrame::OnRefresh()
 		Callback<IWebDiffCallback>([this](const WebDiffCallbackResult& result) -> HRESULT
 			{
 				m_bCompareCompleted = true;
-				if (UpdateDiffItem(m_pDirDoc) == 0 &&
+				if (UpdateLastCompareResult() == 0 &&
 				    std::count(m_filePaths.begin(), m_filePaths.end(), L"about:blank") != m_filePaths.GetSize())
 				{
-					CMergeFrameCommon::ShowIdenticalMessage(m_filePaths, true,
-						[](const tchar_t* msg, UINT flags, UINT id) -> int { return AfxMessageBox(msg, flags, id); });
+					CMergeFrameCommon::ShowIdenticalMessage(m_filePaths, true);
 				}
 				return S_OK;
 			})
@@ -1649,5 +1694,40 @@ void CWebPageDiffFrame::OnSetFocus(CWnd* pNewWnd)
  */
 void CWebPageDiffFrame::OnHelp()
 {
-	theApp.ShowHelp(WebPageDiffFrameHelpLocation);
+	CMergeApp::ShowHelp(WebPageDiffFrameHelpLocation);
 }
+
+/**
+ * @brief Called when the system settings change.
+ */
+void CWebPageDiffFrame::OnSettingChange(UINT uFlags, LPCTSTR lpszSection)
+{
+	if (m_pWebToolWindow && WinMergeDarkMode::IsImmersiveColorSet(lpszSection))
+	{
+		for (int pane = 0; pane < m_pWebDiffWindow->GetPaneCount(); ++pane)
+		{
+			HWND hWnd = m_pWebDiffWindow->GetPaneHWND(pane);
+			if (hWnd != nullptr)
+			{
+				DarkMode::setWindowCtlColorSubclass(hWnd);
+				DarkMode::setWindowNotifyCustomDrawSubclass(hWnd);
+				DarkMode::setChildCtrlsSubclassAndThemeEx(hWnd, true, true);
+				CWnd* pToolbar = FindWindowEx(hWnd, nullptr, TOOLBARCLASSNAME, nullptr);
+				if (pToolbar)
+					DarkMode::setWindowCtlColorSubclass(pToolbar->GetSafeHwnd());
+				::InvalidateRect(hWnd, nullptr, TRUE);
+			}
+		}
+		m_pWebDiffWindow->SetDarkBackgroundEnabled(DarkMode::isEnabled());
+		HWND hPane = m_pWebToolWindow->GetHWND();
+		if (hPane != nullptr)
+		{
+			DarkMode::setWindowCtlColorSubclass(hPane);
+			DarkMode::setWindowNotifyCustomDrawSubclass(hPane);
+			DarkMode::setChildCtrlsSubclassAndThemeEx(hPane, true, true);
+			::InvalidateRect(hPane, nullptr, TRUE);
+		}
+	}
+	__super::OnSettingChange(uFlags, lpszSection);
+}
+

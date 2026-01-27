@@ -12,14 +12,14 @@
 
 #include "pch.h"
 #include "DiffContext.h"
-#include <Poco/ScopedLock.h>
 #include "CompareOptions.h"
 #include "VersionInfo.h"
 #include "paths.h"
 #include "codepage_detect.h"
-#include "DiffItemList.h"
 #include "IAbortable.h"
 #include "DiffWrapper.h"
+#include "FilterEngine/FilterExpression.h"
+#include "RenameMoveDetection.h"
 #include "DebugNew.h"
 
 using Poco::FastMutex;
@@ -59,6 +59,7 @@ CDiffContext::CDiffContext(const PathContext & paths, int compareMethod)
 , m_bEnableImageCompare(false)
 , m_pImgfileFilter(nullptr)
 , m_dColorDistanceThreshold(0.0)
+, m_pRenameMoveDetection(nullptr)
 {
 	int index;
 	for (index = 0; index < paths.GetSize(); index++)
@@ -135,20 +136,14 @@ static bool CheckFileForVersion(const String& ext)
 void CDiffContext::UpdateVersion(DIFFITEM &di, int nIndex) const
 {
 	DiffFileInfo & dfi = di.diffFileInfo[nIndex];
-	// Check only binary files
-	dfi.version.SetFileVersionNone();
-
-	if (di.diffcode.isDirectory())
+	if (!di.diffcode.exists(nIndex) || di.diffcode.isDirectory() || !CheckFileForVersion(paths::FindExtension(di.diffFileInfo[nIndex].filename)))
+	{
+		dfi.version.SetFileVersionNone();
 		return;
+	}
 	
-	String spath;
-	if (!di.diffcode.exists(nIndex))
-		return;
-	String ext = paths::FindExtension(di.diffFileInfo[nIndex].filename);
-	if (!CheckFileForVersion(ext))
-		return;
-	spath = di.getFilepath(nIndex, GetNormalizedPath(nIndex));
-	spath = paths::ConcatPath(spath, di.diffFileInfo[nIndex].filename);
+	const String spath = paths::ConcatPath(
+		di.getFilepath(nIndex, GetNormalizedPath(nIndex)), di.diffFileInfo[nIndex].filename);
 	
 	// Get version info if it exists
 	CVersionInfo ver(spath.c_str());
@@ -180,7 +175,7 @@ bool CDiffContext::CreateCompareOptions(int compareMethod, const DIFFOPTIONS & o
 		// For Date and Date+Size compare `nullptr` is ok since they don't have actual
 		// compare options.
 		if (m_nCompMethod == CMP_DATE || m_nCompMethod == CMP_DATE_SIZE ||
-			m_nCompMethod == CMP_SIZE)
+			m_nCompMethod == CMP_SIZE || m_nCompMethod == CMP_EXISTENCE)
 		{
 			return true;
 		}
@@ -268,7 +263,7 @@ void CDiffContext::GetComparePaths(const DIFFITEM &di, PathContext & tFiles) con
 		}
 		else
 		{
-			tFiles.SetPath(nIndex, _T("NUL"), false);
+			tFiles.SetPath(nIndex, paths::NATIVE_NULL_DEVICE_NAME, false);
 		}
 	}
 }

@@ -12,7 +12,11 @@
 #pragma once
 
 #include "EditorFilepathBar.h"
+#include "BasicFlatStatusBar.h"
+#include "DirCompProgressBar.h"
+#include "DirFilterBar.h"
 #include "MergeFrameCommon.h"
+#include <memory>
 
 /////////////////////////////////////////////////////////////////////////////
 // CDirFrame frame
@@ -36,9 +40,15 @@ public:
 	void SetStatus(const tchar_t* szStatus);
 	void SetCompareMethodStatusDisplay(int nCompMethod);
 	void SetFilterStatusDisplay(const tchar_t* szFilter);
-	CStatusBar  m_wndStatusBar;
-	IHeaderBar * GetHeaderInterface();
+	CBasicFlatStatusBar m_wndStatusBar;
+	IHeaderBar * GetHeaderInterface() override;
 	void UpdateResources();
+	void ShowProgressBar();
+	void HideProgressBar();
+	void ShowFilterBar();
+	void HideFilterBar();
+	DirCompProgressBar* GetCompProgressBar() { return m_pCmpProgressBar.get(); }
+	CDirFilterBar* GetFilterBar() { return m_pDirFilterBar.get(); }
 
 // Overrides
 	// ClassWizard generated virtual function overrides
@@ -50,6 +60,8 @@ public:
 
 protected:
 	CEditorFilePathBar m_wndFilePathBar;
+	std::unique_ptr<DirCompProgressBar> m_pCmpProgressBar;
+	std::unique_ptr<CDirFilterBar> m_pDirFilterBar;
 	virtual ~CDirFrame();
 
 	// Generated message map functions
@@ -57,6 +69,10 @@ protected:
 	afx_msg int OnCreate(LPCREATESTRUCT lpCreateStruct);
 	afx_msg void OnClose();
 	afx_msg void OnSize(UINT nType, int cx, int cy);
+	afx_msg void OnViewDisplayFilterBar();
+	afx_msg void OnUpdateDisplayViewFilterBar(CCmdUI* pCmdUI);
+	afx_msg void OnDisplayFilterBarClose();
+	afx_msg void OnDisplayFilterBarMaskMenu();
 	//}}AFX_MSG
 	DECLARE_MESSAGE_MAP()
 };

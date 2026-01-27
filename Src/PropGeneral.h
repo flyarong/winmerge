@@ -21,7 +21,6 @@ public:
 	~PropGeneral();
 
 // Implement IOptionsPanel
-	virtual void ReadOptions() override;
 	virtual void WriteOptions() override;
 
 // Dialog Data
@@ -42,6 +41,9 @@ public:
 	CComboBox	m_ctlLangList;
 	//}}AFX_DATA
 
+private:
+	// Implementation methods
+	void SetCursorSelectForLanguage(LANGID lang);
 
 // Overrides
 	// ClassWizard generate virtual function overrides
@@ -56,6 +58,7 @@ protected:
 
 	// Generated message map functions
 	//{{AFX_MSG(PropGeneral)
+	afx_msg void OnDefaults() override;
 	afx_msg LRESULT OnLoadLanguages(WPARAM, LPARAM);
 	//}}AFX_MSG
 	DECLARE_MESSAGE_MAP()

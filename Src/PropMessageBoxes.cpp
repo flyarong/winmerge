@@ -24,6 +24,7 @@ static struct MessageBox
 	// folder compare window
 	{ IDS_CREATE_PAIR_FOLDER, IDS_CREATE_PAIR_FOLDER, nullptr, MB_YESNO | MB_ICONWARNING | MB_DONT_ASK_AGAIN },
 	{ IDS_CONFIRM_SINGLE_COPY, 0, _T("FolderCopyConfirmDlgDontAskAgain"), MB_YESNO | MB_ICONWARNING | MB_DONT_ASK_AGAIN },
+	{ IDS_CONFIRM_CLOSE_WINDOW_LONG_COMPARISON, IDS_CONFIRM_CLOSE_WINDOW_LONG_COMPARISON, nullptr, MB_YESNO | MB_ICONWARNING | MB_DONT_ASK_AGAIN },
 	// file compare window
 	{ IDS_COMPARE_LARGE_FILES, 0, _T("CompareLargeFiles"), MB_YESNOCANCEL | MB_ICONQUESTION | MB_DONT_ASK_AGAIN},
 	{ IDS_FILESSAME, IDS_FILESSAME, nullptr, MB_ICONINFORMATION | MB_DONT_DISPLAY_AGAIN},
@@ -42,6 +43,7 @@ static struct MessageBox
 	{ IDS_MOVE_TO_LASTFILE, IDS_MOVE_TO_LASTFILE, nullptr, MB_YESNO | MB_DONT_ASK_AGAIN },
 	{ IDS_MOVE_TO_NEXTPAGE, IDS_MOVE_TO_NEXTPAGE, nullptr, MB_YESNO | MB_DONT_ASK_AGAIN },
 	{ IDS_MOVE_TO_PREVPAGE, IDS_MOVE_TO_PREVPAGE, nullptr, MB_YESNO | MB_DONT_ASK_AGAIN },
+	{ IDS_COPY_ONLYDIFFITEMS, IDS_COPY_ONLYDIFFITEMS, nullptr, MB_YESNOCANCEL | MB_ICONWARNING | MB_DONT_ASK_AGAIN },
 	// report dialog
 	{ IDS_REPORT_FILEOVERWRITE, IDS_REPORT_FILEOVERWRITE, nullptr, MB_YESNO | MB_ICONWARNING | MB_DONT_ASK_AGAIN },
 	// patch dialog
@@ -181,7 +183,7 @@ BOOL PropMessageBoxes::OnInitDialog()
 	auto pointToPixel = [lpx](int point) { return MulDiv(point, lpx, 72); };
 
 	String title = _("Message");
-	m_list.InsertColumn(0, title.c_str(), LVCFMT_LEFT, pointToPixel(220));
+	m_list.InsertColumn(0, title.c_str(), LVCFMT_LEFT, pointToPixel(250));
 	title = _("Answer");
 	m_list.InsertColumn(1, title.c_str(), LVCFMT_LEFT, pointToPixel(70));
 
@@ -190,7 +192,7 @@ BOOL PropMessageBoxes::OnInitDialog()
 
 	for (unsigned i = 0; i < static_cast<unsigned>(std::size(MessageBoxes)); i++)
 	{
-		String str = LoadResString(MessageBoxes[i].nID);
+		String str = I18n::LoadString(MessageBoxes[i].nID);
 		strutils::replace(str, _T("\n"), _T(" "));
 		m_list.InsertItem(i, str.c_str());
 		unsigned type = MessageBoxes[i].type & 0xf;

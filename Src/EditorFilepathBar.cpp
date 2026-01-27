@@ -12,15 +12,22 @@
 
 #include "stdafx.h"
 #include "EditorFilepathBar.h"
+#include "RoundedRectWithShadow.h"
+#include "cecolor.h"
+#include "DarkModeLib.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
 #endif
 
+constexpr int RR_RADIUS = 3;
+constexpr int RR_PADDING = 3;
+constexpr int RR_SHADOWWIDTH = 3;
 
 BEGIN_MESSAGE_MAP(CEditorFilePathBar, CDialogBar)
 	ON_NOTIFY_EX (TTN_NEEDTEXT, 0, OnToolTipNotify)
 	ON_CONTROL_RANGE (EN_SETFOCUS, IDC_STATIC_TITLE_PANE0, IDC_STATIC_TITLE_PANE2, OnSetFocusEdit)
+	ON_CONTROL_RANGE (EN_KILLFOCUS, IDC_STATIC_TITLE_PANE0, IDC_STATIC_TITLE_PANE2, OnKillFocusEdit)
 	ON_CONTROL_RANGE (EN_USER_CAPTION_CHANGED, IDC_STATIC_TITLE_PANE0, IDC_STATIC_TITLE_PANE2, OnChangeEdit)
 	ON_CONTROL_RANGE (EN_USER_FILE_SELECTED, IDC_STATIC_TITLE_PANE0, IDC_STATIC_TITLE_PANE2, OnSelectEdit)
 END_MESSAGE_MAP()
@@ -50,23 +57,22 @@ CEditorFilePathBar::~CEditorFilePathBar()
 BOOL CEditorFilePathBar::Create(CWnd* pParentWnd)
 {
 	if (! __super::Create(pParentWnd, CEditorFilePathBar::IDD, 
-			CBRS_ALIGN_TOP | CBRS_TOOLTIPS | CBRS_FLYBY, CEditorFilePathBar::IDD))
+			CBRS_ALIGN_TOP | CBRS_TOOLTIPS | CBRS_FLYBY, AFX_IDW_CONTROLBAR_FIRST+29))
 		return FALSE;
 
 	NONCLIENTMETRICS ncm = { sizeof NONCLIENTMETRICS };
 	if (SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof NONCLIENTMETRICS, &ncm, 0))
+	{
+		ncm.lfStatusFont.lfWeight = FW_BOLD;
 		m_font.CreateFontIndirect(&ncm.lfStatusFont);
+	}
 
 	// subclass the two custom edit boxes
-	const int lpx = CClientDC(this).GetDeviceCaps(LOGPIXELSX);
-	auto pointToPixel = [lpx](int point) { return MulDiv(point, lpx, 72); };
-	int cx = -pointToPixel(ncm.lfStatusFont.lfHeight);
-	int m = pointToPixel(3);
 	for (int pane = 0; pane < static_cast<int>(std::size(m_Edit)); pane++)
 	{
 		m_Edit[pane].SubClassEdit(IDC_STATIC_TITLE_PANE0 + pane, this);
 		m_Edit[pane].SetFont(&m_font);
-		m_Edit[pane].SetMargins(m, m + cx);
+		m_Edit[pane].SetMargins(0, std::abs(ncm.lfStatusFont.lfHeight));
 	}
 	return TRUE;
 };
@@ -80,7 +86,7 @@ CSize CEditorFilePathBar::CalcFixedLayout(BOOL bStretch, BOOL bHorz)
 	dc.SelectObject(pOldFont);
 	const int lpx = dc.GetDeviceCaps(LOGPIXELSX);
 	auto pointToPixel = [lpx](int point) { return MulDiv(point, lpx, 72); };
-	int cy = pointToPixel(4);
+	int cy = pointToPixel(3 + RR_SHADOWWIDTH + RR_PADDING);
 	return CSize(SHRT_MAX, 1 + tm.tmHeight + cy);
 }
 
@@ -117,6 +123,7 @@ void CEditorFilePathBar::Resize(int widths[])
 	CRect rc;
 	int x = 0;
 	GetClientRect(&rc);
+	bool resized = false;
 	for (int pane = 0; pane < m_nPanes; pane++)
 	{
 		CRect rcOld;
@@ -126,10 +133,47 @@ void CEditorFilePathBar::Resize(int widths[])
 		x = rc.right;
 		if (rcOld.Width() != rc.Width())
 		{
-			m_Edit[pane].MoveWindow(&rc);
+			CClientDC dc(this);
+			const int lpx = dc.GetDeviceCaps(LOGPIXELSX);
+			auto pointToPixel = [lpx](int point) { return MulDiv(point, lpx, 72); };
+			const int sw = pointToPixel(RR_SHADOWWIDTH);
+			CRect rc2 = rc;
+			rc2.DeflateRect(sw + sw, sw);
+			m_Edit[pane].MoveWindow(&rc2);
 			m_Edit[pane].RefreshDisplayText();
+			resized = true;
 		}
 	}
+	if (resized)
+		InvalidateRect(nullptr, false);
+}
+
+void CEditorFilePathBar::DoPaint(CDC* pDC)
+{
+	const int lpx = pDC->GetDeviceCaps(LOGPIXELSX);
+	auto pointToPixel = [lpx](int point) { return MulDiv(point, lpx, 72); };
+	const int r = pointToPixel(RR_RADIUS);
+	const int sw = pointToPixel(RR_SHADOWWIDTH);
+	CRect rcBar;
+	GetWindowRect(&rcBar);
+	const COLORREF clrBarBackcolor = GetSysColor(COLOR_3DFACE);
+	for (int pane = 0; pane < m_nPanes; pane++)
+	{
+		CRect rc;
+		m_Edit[pane].GetWindowRect(&rc);
+		const COLORREF clrBackcolor = m_Edit[pane].GetBackColor();
+		const COLORREF clrShadow =
+			CEColor::GetIntermediateColor(clrBarBackcolor, GetSysColor(COLOR_3DSHADOW), m_Edit[pane].GetActive() ? 0.5f : 0.8f);
+		rc.OffsetRect(-rcBar.left, -rcBar.top);
+		DrawRoundedRectWithShadow(pDC->m_hDC, rc.left - sw, rc.top, rc.right - rc.left + 2 * sw, rc.bottom - rc.top, r, sw,
+			clrBackcolor, clrShadow, clrBarBackcolor);
+		if (pane == m_nPanes - 1)
+		{
+			CRect rc2{ rc.right + sw + sw, 0, rcBar.Width(), rcBar.Height() };
+			pDC->FillSolidRect(&rc2, clrBarBackcolor);
+		}
+	}
+	__super::DoPaint(pDC);
 }
 
 /**
@@ -173,7 +217,7 @@ BOOL CEditorFilePathBar::OnToolTipNotify(UINT id, NMHDR * pTTTStruct, LRESULT * 
 			// we must set TTM_SETMAXTIPWIDTH to use \n in tooltips
 			// just to do the first time, but how to access the tooltip during init ?
 			::SendMessage(pTTTStruct->hwndFrom, TTM_SETMAXTIPWIDTH, 0, 5000);
-
+			SetToolTipsFirstTime(pTTTStruct->hwndFrom);
 			return TRUE;
 		}
 	}
@@ -182,13 +226,25 @@ BOOL CEditorFilePathBar::OnToolTipNotify(UINT id, NMHDR * pTTTStruct, LRESULT * 
 
 void CEditorFilePathBar::OnSetFocusEdit(UINT id)
 {
+	const int pane = id - IDC_STATIC_TITLE_PANE0;
+	if (pane < 0 || pane >= m_nPanes)
+		return;
+	InvalidateRect(nullptr, false);
 	if (m_setFocusCallbackfunc)
-		m_setFocusCallbackfunc(id - IDC_STATIC_TITLE_PANE0);
+		m_setFocusCallbackfunc(pane);
+}
+
+void CEditorFilePathBar::OnKillFocusEdit(UINT id)
+{
+	InvalidateRect(nullptr, false);
 }
 
 void CEditorFilePathBar::OnChangeEdit(UINT id)
 {
 	const int pane = id - IDC_STATIC_TITLE_PANE0;
+	if (pane < 0 || pane >= m_nPanes)
+		return;
+	InvalidateRect(nullptr, false);
 	if (m_captionChangedCallbackfunc)
 	{
 		CString text;
@@ -200,6 +256,9 @@ void CEditorFilePathBar::OnChangeEdit(UINT id)
 void CEditorFilePathBar::OnSelectEdit(UINT id)
 {
 	const int pane = id - IDC_STATIC_TITLE_PANE0;
+	if (pane < 0 || pane >= m_nPanes)
+		return;
+	InvalidateRect(nullptr, false);
 	(m_fileSelectedCallbackfunc ? m_fileSelectedCallbackfunc : m_folderSelectedCallbackfunc)
 		(pane, m_Edit[pane].GetSelectedPath());
 }
@@ -209,7 +268,7 @@ void CEditorFilePathBar::OnSelectEdit(UINT id)
  *
  * @param [in] pane Index (0-based) of pane to update.
  */
-String CEditorFilePathBar::GetText(int pane) const
+String CEditorFilePathBar::GetCaption(int pane) const
 {
 	ASSERT (pane >= 0 && pane < static_cast<int>(std::size(m_Edit)));
 
@@ -228,7 +287,7 @@ String CEditorFilePathBar::GetText(int pane) const
  * @param [in] pane Index (0-based) of pane to update.
  * @param [in] lpszString New text for pane.
  */
-void CEditorFilePathBar::SetText(int pane, const String& sString)
+void CEditorFilePathBar::SetCaption(int pane, const String& sString)
 {
 	ASSERT (pane >= 0 && pane < static_cast<int>(std::size(m_Edit)));
 
@@ -237,6 +296,38 @@ void CEditorFilePathBar::SetText(int pane, const String& sString)
 		return;
 
 	m_Edit[pane].SetOriginalText(sString);
+}
+
+String CEditorFilePathBar::GetPath(int pane) const
+{
+	ASSERT (pane >= 0 && pane < static_cast<int>(std::size(m_Edit)));
+
+	// Check for `nullptr` since window may be closing..
+	if (m_hWnd == nullptr)
+		return _T("");
+
+	return m_Edit[pane].GetPath();
+}
+
+void CEditorFilePathBar::SetPath(int pane, const String& sString)
+{
+	ASSERT (pane >= 0 && pane < static_cast<int>(std::size(m_Edit)));
+
+	// Check for `nullptr` since window may be closing..
+	if (m_hWnd == nullptr)
+		return;
+
+	m_Edit[pane].SetPath(sString);
+}
+
+int CEditorFilePathBar::GetActive() const
+{
+	for (int pane = 0; pane < m_nPanes; pane++)
+	{
+		if (m_Edit[pane].GetActive())
+			return pane;
+	}
+	return -1;
 }
 
 /** 
@@ -253,5 +344,23 @@ void CEditorFilePathBar::SetActive(int pane, bool bActive)
 	if (m_hWnd == nullptr)
 		return;
 
+	if (bActive != m_Edit[pane].GetActive())
+		InvalidateRect(nullptr, false);
 	m_Edit[pane].SetActive(bActive);
+}
+
+void CEditorFilePathBar::SetToolTipsFirstTime(HWND hTip)
+{
+	if (m_Tips.find(hTip) == m_Tips.end())
+	{
+		m_Tips.insert(hTip);
+		DarkMode::setDarkTooltips(hTip, static_cast<int>(DarkMode::ToolTipsType::tooltip));
+	}
+}
+
+void CEditorFilePathBar::EditActivePanePath()
+{
+	const int pane = GetActive();
+	if (pane >= 0)
+		m_Edit[pane].PostMessage(WM_COMMAND, ID_EDITOR_EDIT_PATH, 0);
 }

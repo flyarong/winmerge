@@ -22,6 +22,7 @@
 #include "SyntaxColors.h"
 #include "MergeCmdLineInfo.h"
 #include "editcmd.h"
+#include "ClipBoard.h"
 #include "gtest/gtest.h"
 
 String getProjectRoot()
@@ -112,272 +113,6 @@ TEST(SyntaxHighlight, Verilog)
 
 	pFrame->PostMessage(WM_CLOSE);
 	dlg.SetFormerResult(nPrevFormerResult);
-}
-
-TEST(FileCompare, FindText)
-{
-	String projectRoot = getProjectRoot();
-	CMessageBoxDialog dlg(nullptr, IDS_FILE_TO_ITSELF, 0U, 0U, IDS_FILE_TO_ITSELF);
-	const int nPrevFormerResult = dlg.SetFormerResult(IDOK);
-	CMergeDoc *pDoc = nullptr;
-	CFrameWnd *pFrame = nullptr;
-	PathContext tFiles = {
-		paths::ConcatPath(projectRoot, _T("Testing/Data/FindText/test1.txt")),
-		paths::ConcatPath(projectRoot, _T("Testing/Data/FindText/test1.txt")),
-	};
-	EXPECT_TRUE(GetMainFrame()->DoFileOrFolderOpen(&tFiles));
-	pFrame = GetMainFrame()->GetActiveFrame();
-	pDoc = dynamic_cast<CMergeDoc *>(pFrame->GetActiveDocument());
-	EXPECT_NE(nullptr, pDoc);
-	if (pDoc == nullptr)
-		return;
-
-	CMergeEditView *pView = pDoc->GetView(0, 0);
-
-	CString lines, lineslower;
-	pView->GetTextWithoutEmptys(0, 0, pView->GetLineCount() - 1, pView->GetLineLength(pView->GetLineCount() - 1), lines);
-	lineslower = lines;
-	lineslower.MakeLower();
-
-	CEPoint pt, ptFound;
-	DWORD dwFlags = 0;
-	LastSearchInfos lsi = { 0 };
-	CEPoint ptstart, ptstart2, ptend;
-
-	for (int direction : { 1, 0 })
-	{
-		for (bool useregex : { false, true })
-		{
-			for (bool matchcase : { true, false })
-			{
-				for (CString text : { _T("a"), _T("abc")})
-				{
-					size_t count = 0;
-					int pos = 0;
-					while (true)
-					{
-						pos = (matchcase ? lines : lineslower).Find(text, pos);
-						if (pos < 0)
-							break;
-						pos += text.GetLength();
-						count++;
-					}
-					pView->SetCursorPos({ 0, 0 });
-					pView->SetNewAnchor({ 0, 0 });
-					pView->SetNewSelection({ 0, 0 }, { 0, 0 });
-					lsi.m_sText = text;
-					lsi.m_bNoWrap = false;
-					lsi.m_bMatchCase = matchcase;
-					lsi.m_nDirection = direction;
-					lsi.m_bRegExp = useregex;
-					for (size_t i = 0; i < count; ++i)
-					{
-						pView->FindText(&lsi);
-						if (i == 0)
-							ptstart = pView->GetAnchor();
-						Wait(1);
-					}
-					ptend = pView->GetAnchor();
-					pView->FindText(&lsi);
-					ptstart2 = pView->GetAnchor();
-					if (direction == 0)
-						EXPECT_LT(ptend.y, ptstart2.y);
-					else
-						EXPECT_GT(ptend.y, ptstart2.y);
-					EXPECT_EQ(ptstart.y, ptstart2.y);
-					EXPECT_EQ(text.MakeLower(), pView->GetSelectedText().MakeLower());
-				}
-			}
-		}
-	}
-
-	pFrame->PostMessage(WM_CLOSE);
-	dlg.SetFormerResult(nPrevFormerResult);
-}
-
-TEST(FileCompare, LastLineEOL)
-{
-	String projectRoot = getProjectRoot();
-	const static String filelist[] = {
-		_T("0None.txt"),
-		_T("0CRLF.txt"),
-		_T("1None.txt"),
-		_T("1CRLF.txt"),
-		_T("3None.txt"),
-		_T("3CRLF.txt"),
-		_T("2-3CRLF.txt")
-	};
-	CMessageBoxDialog dlg(nullptr, IDS_FILESSAME, 0U, 0U, IDS_FILESSAME);
-	CMessageBoxDialog dlg2(nullptr, IDS_FILE_TO_ITSELF, 0U, 0U, IDS_FILE_TO_ITSELF);
-	const int nPrevFormerResult = dlg.SetFormerResult(IDOK);
-	const int nPrevFormerResult2 = dlg2.SetFormerResult(IDOK);
-	CMergeDoc *pDoc = nullptr;
-	CFrameWnd *pFrame = nullptr;
-	for (bool bIgnoreBlankLines: { true, false })
-	{
-		GetOptionsMgr()->Set(OPT_CMP_IGNORE_BLANKLINES, bIgnoreBlankLines);
-		for (auto nIgnoreWhitespace: { WHITESPACE_COMPARE_ALL, WHITESPACE_IGNORE_CHANGE, WHITESPACE_IGNORE_ALL})
-		{
-			GetOptionsMgr()->Set(OPT_CMP_IGNORE_WHITESPACE, nIgnoreWhitespace);
-			if (pDoc)
-				pDoc->RefreshOptions();
-			for (size_t l = 0; l < std::size(filelist); ++l)
-			{
-				for (size_t r = 0; r < std::size(filelist); ++r)
-				{
-					PathContext tFiles = {
-						paths::ConcatPath(projectRoot, paths::ConcatPath(_T("Testing/Data/LastLineEOL"), filelist[l])),
-						paths::ConcatPath(projectRoot, paths::ConcatPath(_T("Testing/Data/LastLineEOL"), filelist[r])),
-					};
-					if (!pFrame)
-					{
-						EXPECT_TRUE(GetMainFrame()->DoFileOrFolderOpen(&tFiles));
-						pFrame = GetMainFrame()->GetActiveFrame();
-						pDoc = dynamic_cast<CMergeDoc *>(pFrame->GetActiveDocument());
-						EXPECT_NE(nullptr, pDoc);
-						if (pDoc == nullptr)
-							return;
-					}
-					if (r == 0)
-					{
-						pDoc->ChangeFile(0, tFiles[0]);
-					}
-					pDoc->ChangeFile(1, tFiles[1]);
-
-					if (tFiles[0] == tFiles[1])
-					{
-						EXPECT_EQ(0, pDoc->m_diffList.GetSize());
-					}
-					else
-					{
-						if (pDoc->m_diffList.DiffRangeAt(0)->op == OP_TRIVIAL)
-						{
-							EXPECT_EQ(true, bIgnoreBlankLines);
-						}
-						else
-						{
-							CMergeEditView *pView = pDoc->GetView(0, 0); // merge
-							EXPECT_LE(1, pDoc->m_diffList.GetSize());
-							pDoc->CopyAllList(0, 1);
-							EXPECT_EQ(0, pDoc->m_diffList.GetSize());
-							// undo
-							pView->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
-							EXPECT_LE(1, pDoc->m_diffList.GetSize());
-							// insert a character at the last line
-							pView->GotoLine(pDoc->m_ptBuf[0]->GetLineCount() - 1, false, 0);
-							pView->SendMessage(WM_CHAR, 'a');
-							// undo
-							pView->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
-
-							pView = pDoc->GetView(0, 1);
-							pView->GotoLine(0, false, 1);
-							// Select all & Delete
-							pView->SendMessage(WM_COMMAND, ID_EDIT_SELECT_ALL);
-							pView->SendMessage(WM_COMMAND, ID_EDIT_DELETE);
-							// undo
-							pView->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
-							// redo
-							pView->SendMessage(WM_COMMAND, ID_EDIT_REDO);
-							// undo
-							pView->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
-						}
-					}
-				}
-			}
-		}
-	}
-	pFrame->PostMessage(WM_CLOSE);
-	dlg.SetFormerResult(nPrevFormerResult);
-	dlg2.SetFormerResult(nPrevFormerResult2);
-}
-
-TEST(FolderCompare, IgnoreEOL)
-{
-	String projectRoot = getProjectRoot();
-	PathContext dirsArray[] = {
-		{
-			paths::ConcatPath(projectRoot, L"Testing/selftests/u/"),
-			paths::ConcatPath(projectRoot, L"Testing/selftests/m/")
-		},
-		{
-			paths::ConcatPath(projectRoot, L"Testing/selftests/w/"),
-			paths::ConcatPath(projectRoot, L"Testing/selftests/u/")
-		},
-		{
-			paths::ConcatPath(projectRoot, L"Testing/selftests/w/"),
-			paths::ConcatPath(projectRoot, L"Testing/selftests/m/")
-		}
-	};
-
-	for (auto& dirs : dirsArray)
-	{
-		GetOptionsMgr()->Set(OPT_CMP_METHOD, 0/* Full Contents*/);
-		GetOptionsMgr()->Set(OPT_CMP_IGNORE_EOL, true);
-		EXPECT_TRUE(GetMainFrame()->DoFileOrFolderOpen(&dirs));
-		CFrameWnd *pFrame = GetMainFrame()->GetActiveFrame();
-		CDirDoc *pDoc = dynamic_cast<CDirDoc *>(pFrame->GetActiveDocument());
-		EXPECT_NE(nullptr, pDoc);
-		if (pDoc == nullptr)
-		{
-			pFrame->PostMessage(WM_CLOSE);
-			continue;
-		}
-		CDirView *pView = pDoc->GetMainView();
-		const CDiffContext& ctxt = pDoc->GetDiffContext();
-		const CompareStats *pStats = ctxt.m_pCompareStats;
-		do { Sleep(100); } while (!pStats->IsCompareDone());
-		EXPECT_EQ(10, pStats->GetTotalItems());
-		EXPECT_EQ(10, pStats->GetCount(CompareStats::RESULT::RESULT_SAME));
-		DIFFITEM *pos = ctxt.GetFirstDiffPosition();
-		while (pos != nullptr)
-		{
-			const DIFFITEM& di = ctxt.GetNextDiffPosition(pos);
-			for (int i = 0; i < 2; ++i)
-			{
-				if (dirs[i].find(L"/w/") != String::npos)
-				{
-					EXPECT_LT(0, di.diffFileInfo[i].m_textStats.ncrlfs);
-					EXPECT_EQ(0, di.diffFileInfo[i].m_textStats.nlfs);
-					EXPECT_EQ(0, di.diffFileInfo[i].m_textStats.ncrs);
-				}
-				else if (dirs[i].find(L"/u/") != String::npos)
-				{
-					EXPECT_LT(0, di.diffFileInfo[i].m_textStats.nlfs);
-					EXPECT_EQ(0, di.diffFileInfo[i].m_textStats.ncrlfs);
-					EXPECT_EQ(0, di.diffFileInfo[i].m_textStats.ncrs);
-				}
-				else if (dirs[i].find(L"/m/") != String::npos)
-				{
-					EXPECT_LT(0, di.diffFileInfo[i].m_textStats.ncrs);
-					EXPECT_EQ(0, di.diffFileInfo[i].m_textStats.nlfs);
-					EXPECT_EQ(0, di.diffFileInfo[i].m_textStats.ncrlfs);
-				}
-			}
-		}
-
-		GetOptionsMgr()->Set(OPT_CMP_METHOD, 0/* Full Contents*/);
-		GetOptionsMgr()->Set(OPT_CMP_IGNORE_EOL, false);
-		pDoc->Rescan();
-		do { Sleep(100); } while (!pStats->IsCompareDone());
-		EXPECT_EQ(10, pStats->GetTotalItems());
-		EXPECT_EQ(10, pStats->GetCount(CompareStats::RESULT::RESULT_DIFF));
-
-		GetOptionsMgr()->Set(OPT_CMP_METHOD, 1/* Quick Contents*/);
-		GetOptionsMgr()->Set(OPT_CMP_IGNORE_EOL, true);
-		pDoc->Rescan();
-		do { Sleep(100); } while (!pStats->IsCompareDone());
-		EXPECT_EQ(10, pStats->GetTotalItems());
-		EXPECT_EQ(10, pStats->GetCount(CompareStats::RESULT::RESULT_SAME));
-
-		GetOptionsMgr()->Set(OPT_CMP_METHOD, 1/* Quick Contents*/);
-		GetOptionsMgr()->Set(OPT_CMP_IGNORE_EOL, false);
-		pDoc->Rescan();
-		do { Sleep(100); } while (!pStats->IsCompareDone());
-		EXPECT_EQ(10, pStats->GetTotalItems());
-		EXPECT_EQ(10, pStats->GetCount(CompareStats::RESULT::RESULT_DIFF));
-
-		pFrame->PostMessage(WM_CLOSE);
-	}
 }
 
 TEST(CommandLineTest, Desc)
@@ -578,6 +313,443 @@ TEST(CommandLineTest, New)
 	pFrame = GetMainFrame()->GetActiveFrame();
 	EXPECT_TRUE(pFrame->IsKindOf(RUNTIME_CLASS(CMergeEditFrame)));
 	pFrame->PostMessage(WM_CLOSE);
+}
+
+TEST(FileCompare, FindText)
+{
+	String projectRoot = getProjectRoot();
+	CMessageBoxDialog dlg(nullptr, IDS_FILE_TO_ITSELF, 0U, 0U, IDS_FILE_TO_ITSELF);
+	const int nPrevFormerResult = dlg.SetFormerResult(IDOK);
+	CMergeDoc *pDoc = nullptr;
+	CFrameWnd *pFrame = nullptr;
+	PathContext tFiles = {
+		paths::ConcatPath(projectRoot, _T("Testing/Data/FindText/test1.txt")),
+		paths::ConcatPath(projectRoot, _T("Testing/Data/FindText/test1.txt")),
+	};
+	EXPECT_TRUE(GetMainFrame()->DoFileOrFolderOpen(&tFiles));
+	pFrame = GetMainFrame()->GetActiveFrame();
+	pDoc = dynamic_cast<CMergeDoc *>(pFrame->GetActiveDocument());
+	EXPECT_NE(nullptr, pDoc);
+	if (pDoc == nullptr)
+		return;
+
+	CMergeEditView *pView = pDoc->GetView(0, 0);
+
+	CString lines, lineslower;
+	pView->GetTextWithoutEmptys(0, 0, pView->GetLineCount() - 1, pView->GetLineLength(pView->GetLineCount() - 1), lines);
+	lineslower = lines;
+	lineslower.MakeLower();
+
+	CEPoint pt, ptFound;
+	DWORD dwFlags = 0;
+	LastSearchInfos lsi = { 0 };
+	CEPoint ptstart, ptstart2, ptend;
+
+	for (int direction : { 1, 0 })
+	{
+		for (bool useregex : { false, true })
+		{
+			for (bool matchcase : { true, false })
+			{
+				for (CString text : { _T("a"), _T("abc")})
+				{
+					size_t count = 0;
+					int pos = 0;
+					while (true)
+					{
+						pos = (matchcase ? lines : lineslower).Find(text, pos);
+						if (pos < 0)
+							break;
+						pos += text.GetLength();
+						count++;
+					}
+					pView->SetCursorPos({ 0, 0 });
+					pView->SetNewAnchor({ 0, 0 });
+					pView->SetNewSelection({ 0, 0 }, { 0, 0 });
+					lsi.m_sText = text;
+					lsi.m_bNoWrap = false;
+					lsi.m_bMatchCase = matchcase;
+					lsi.m_nDirection = direction;
+					lsi.m_bRegExp = useregex;
+					for (size_t i = 0; i < count; ++i)
+					{
+						pView->FindText(&lsi);
+						if (i == 0)
+							ptstart = pView->GetAnchor();
+						Wait(1);
+					}
+					ptend = pView->GetAnchor();
+					pView->FindText(&lsi);
+					ptstart2 = pView->GetAnchor();
+					if (direction == 0)
+						EXPECT_LT(ptend.y, ptstart2.y);
+					else
+						EXPECT_GT(ptend.y, ptstart2.y);
+					EXPECT_EQ(ptstart.y, ptstart2.y);
+					EXPECT_EQ(text.MakeLower(), pView->GetSelectedText().MakeLower());
+				}
+			}
+		}
+	}
+
+	pFrame->PostMessage(WM_CLOSE);
+	dlg.SetFormerResult(nPrevFormerResult);
+}
+
+TEST(FileCompare, LastLineEOL)
+{
+	String projectRoot = getProjectRoot();
+	const static String filelist[] = {
+		_T("0None.txt"),
+		_T("0CRLF.txt"),
+		_T("1None.txt"),
+		_T("1CRLF.txt"),
+		_T("3None.txt"),
+		_T("3CRLF.txt"),
+		_T("2-3CRLF.txt")
+	};
+	CMessageBoxDialog dlg(nullptr, IDS_FILESSAME, 0U, 0U, IDS_FILESSAME);
+	CMessageBoxDialog dlg2(nullptr, IDS_FILE_TO_ITSELF, 0U, 0U, IDS_FILE_TO_ITSELF);
+	const int nPrevFormerResult = dlg.SetFormerResult(IDOK);
+	const int nPrevFormerResult2 = dlg2.SetFormerResult(IDOK);
+	CMergeDoc *pDoc = nullptr;
+	CFrameWnd *pFrame = nullptr;
+	for (bool bIgnoreBlankLines: { true, false })
+	{
+		GetOptionsMgr()->Set(OPT_CMP_IGNORE_BLANKLINES, bIgnoreBlankLines);
+		for (auto nIgnoreWhitespace: { WHITESPACE_COMPARE_ALL, WHITESPACE_IGNORE_CHANGE, WHITESPACE_IGNORE_ALL})
+		{
+			GetOptionsMgr()->Set(OPT_CMP_IGNORE_WHITESPACE, nIgnoreWhitespace);
+			if (pDoc)
+				pDoc->RefreshOptions();
+			for (size_t l = 0; l < std::size(filelist); ++l)
+			{
+				for (size_t r = 0; r < std::size(filelist); ++r)
+				{
+					PathContext tFiles = {
+						paths::ConcatPath(projectRoot, paths::ConcatPath(_T("Testing/Data/LastLineEOL"), filelist[l])),
+						paths::ConcatPath(projectRoot, paths::ConcatPath(_T("Testing/Data/LastLineEOL"), filelist[r])),
+					};
+					if (!pFrame)
+					{
+						EXPECT_TRUE(GetMainFrame()->DoFileOrFolderOpen(&tFiles));
+						pFrame = GetMainFrame()->GetActiveFrame();
+						pDoc = dynamic_cast<CMergeDoc *>(pFrame->GetActiveDocument());
+						EXPECT_NE(nullptr, pDoc);
+						if (pDoc == nullptr)
+							return;
+					}
+					if (r == 0)
+					{
+						pDoc->ChangeFile(0, tFiles[0]);
+					}
+					pDoc->ChangeFile(1, tFiles[1]);
+
+					if (tFiles[0] == tFiles[1])
+					{
+						EXPECT_EQ(0, pDoc->m_diffList.GetSize());
+					}
+					else
+					{
+						if (pDoc->m_diffList.DiffRangeAt(0)->op == OP_TRIVIAL)
+						{
+							EXPECT_EQ(true, bIgnoreBlankLines);
+						}
+						else
+						{
+							CMergeEditView *pView = pDoc->GetView(0, 0); // merge
+							EXPECT_LE(1, pDoc->m_diffList.GetSize());
+							pDoc->CopyAllList(0, 1);
+							EXPECT_EQ(0, pDoc->m_diffList.GetSize());
+							// undo
+							pView->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
+							EXPECT_LE(1, pDoc->m_diffList.GetSize());
+							// insert a character at the last line
+							pView->GotoLine(pDoc->m_ptBuf[0]->GetLineCount() - 1, false, 0);
+							pView->SendMessage(WM_CHAR, 'a');
+							// undo
+							pView->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
+
+							pView = pDoc->GetView(0, 1);
+							pView->GotoLine(0, false, 1);
+							// Select all & Delete
+							pView->SendMessage(WM_COMMAND, ID_EDIT_SELECT_ALL);
+							pView->SendMessage(WM_COMMAND, ID_EDIT_DELETE);
+							// undo
+							pView->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
+							// redo
+							pView->SendMessage(WM_COMMAND, ID_EDIT_REDO);
+							// undo
+							pView->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
+						}
+					}
+				}
+			}
+		}
+	}
+	pFrame->PostMessage(WM_CLOSE);
+	dlg.SetFormerResult(nPrevFormerResult);
+	dlg2.SetFormerResult(nPrevFormerResult2);
+}
+
+bool PutToClipboard2(const String& text, HWND hwnd)
+{
+	bool result = false;
+	for (int i = 0; i < 10; ++i)
+	{
+		SetFocus(hwnd);
+		result = PutToClipboard(text, hwnd);
+		EXPECT_EQ(true, result);
+		if (result)
+			break;
+		Sleep(10);
+	}
+	return result;
+}
+
+TEST(FileCompare, Issue2702)
+{
+	CMessageBoxDialog dlg(nullptr, IDS_FILESSAME, 0U, 0U, IDS_FILESSAME);
+	const int nPrevFormerResult = dlg.SetFormerResult(IDOK);
+	EXPECT_TRUE(GetMainFrame()->DoFileNew(ID_MERGE_COMPARE_TEXT, 2));
+	CFrameWnd* pFrame = GetMainFrame()->GetActiveFrame();
+	EXPECT_NE(nullptr, pFrame);
+	if (pFrame == nullptr)
+		return;
+	CMergeDoc* pDoc = dynamic_cast<CMergeDoc *>(pFrame->GetActiveDocument());
+	EXPECT_NE(nullptr, pDoc);
+	if (pDoc == nullptr)
+		return;
+	CMergeEditView *pViewLeft = pDoc->GetView(0, 0);
+	String text = _T("aaa\r\nbbb\r\nccc\r\n");
+	EXPECT_EQ(true, PutToClipboard2(text, pViewLeft->m_hWnd));
+	pViewLeft->SendMessage(WM_COMMAND, ID_EDIT_PASTE);
+	pViewLeft->SendMessage(WM_COMMAND, ID_REFRESH);
+	for (int l = 0; l < 4; ++l)
+	{
+		EXPECT_EQ(1, pDoc->GetDiffCount());
+		CMergeEditView *pView = pDoc->GetView(0, 1);
+		pView->SetCursorPos({ 0, l });
+		pView->SendMessage(WM_COMMAND, ID_EDIT_PASTE);
+		pView->SendMessage(WM_COMMAND, ID_REFRESH);
+		EXPECT_EQ(0, pDoc->GetDiffCount());
+		pView->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
+	}
+	pViewLeft->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
+	pFrame->PostMessage(WM_CLOSE);
+	dlg.SetFormerResult(nPrevFormerResult);
+}
+
+TEST(FileCompare, Issue2702_2)
+{
+	CMessageBoxDialog dlg(nullptr, IDS_FILESSAME, 0U, 0U, IDS_FILESSAME);
+	const int nPrevFormerResult = dlg.SetFormerResult(IDOK);
+	EXPECT_TRUE(GetMainFrame()->DoFileNew(ID_MERGE_COMPARE_TEXT, 2));
+	CFrameWnd* pFrame = GetMainFrame()->GetActiveFrame();
+	EXPECT_NE(nullptr, pFrame);
+	if (pFrame == nullptr)
+		return;
+	CMergeDoc* pDoc = dynamic_cast<CMergeDoc *>(pFrame->GetActiveDocument());
+	EXPECT_NE(nullptr, pDoc);
+	if (pDoc == nullptr)
+		return;
+	CMergeEditView *pViewLeft = pDoc->GetView(0, 0);
+	String text = _T("aaa\r\nbbb\r\nccc\r\nddd\r\n");
+	EXPECT_EQ(true, PutToClipboard2(text, pViewLeft->m_hWnd));
+	pViewLeft->SendMessage(WM_COMMAND, ID_EDIT_PASTE);
+	CMergeEditView *pViewRight = pDoc->GetView(0, 1);
+	text = _T("ddd\r\n");
+	EXPECT_EQ(true, PutToClipboard2(text, pViewRight->m_hWnd));
+	pViewRight->SendMessage(WM_COMMAND, ID_EDIT_PASTE);
+	pViewRight->SendMessage(WM_COMMAND, ID_REFRESH);
+	for (int l = 0; l < 4; ++l)
+	{
+		EXPECT_EQ(1, pDoc->GetDiffCount()) << "l=" << l;
+		pViewRight->SetCursorPos({ 0, l });
+		text = _T("aaa\r\nbbb\r\nccc\r\n");
+		EXPECT_EQ(true, PutToClipboard2(text, pViewRight->m_hWnd));
+		pViewRight->SendMessage(WM_COMMAND, ID_EDIT_PASTE);
+		pViewRight->SendMessage(WM_COMMAND, ID_REFRESH);
+		CString left, right;
+		pViewLeft->GetTextWithoutEmptys(0, 0, pViewLeft->GetLineCount() - 1, 0, left);
+		pViewRight->GetTextWithoutEmptys(0, 0, pViewRight->GetLineCount() - 1, 0, right);
+		ASSERT_EQ(0, pDoc->GetDiffCount()) << "l=" << l << " left=" << (const tchar_t*)left << " right=" << (const tchar_t*)right;
+		pViewRight->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
+	}
+	pViewLeft->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
+	pFrame->PostMessage(WM_CLOSE);
+	dlg.SetFormerResult(nPrevFormerResult);
+}
+
+TEST(FileCompare, Issue2702_3)
+{
+	CMessageBoxDialog dlg(nullptr, IDS_FILESSAME, 0U, 0U, IDS_FILESSAME);
+	const int nPrevFormerResult = dlg.SetFormerResult(IDOK);
+	EXPECT_TRUE(GetMainFrame()->DoFileNew(ID_MERGE_COMPARE_TEXT, 2));
+	CFrameWnd* pFrame = GetMainFrame()->GetActiveFrame();
+	EXPECT_NE(nullptr, pFrame);
+	if (pFrame == nullptr)
+		return;
+	CMergeDoc* pDoc = dynamic_cast<CMergeDoc *>(pFrame->GetActiveDocument());
+	EXPECT_NE(nullptr, pDoc);
+	if (pDoc == nullptr)
+		return;
+	CMergeEditView *pViewLeft = pDoc->GetView(0, 0);
+	String text = _T("aaa\r\nbbb\r\nccc\r\nddd\r\n");
+	EXPECT_EQ(true, PutToClipboard2(text, pViewLeft->m_hWnd));
+	pViewLeft->SendMessage(WM_COMMAND, ID_EDIT_PASTE);
+	CMergeEditView *pViewRight = pDoc->GetView(0, 1);
+	text = _T("aaa\r\n");
+	EXPECT_EQ(true, PutToClipboard2(text, pViewRight->m_hWnd));
+	pViewRight->SendMessage(WM_COMMAND, ID_EDIT_PASTE);
+	pViewRight->SendMessage(WM_COMMAND, ID_REFRESH);
+	for (int l = 1; l < 5; ++l)
+	{
+		EXPECT_EQ(1, pDoc->GetDiffCount()) << "l=" << l;
+		pViewRight->SetCursorPos({ 0, l });
+		text = _T("bbb\r\nccc\r\nddd\r\n");
+		EXPECT_EQ(true, PutToClipboard2(text, pViewRight->m_hWnd));
+		pViewRight->SendMessage(WM_COMMAND, ID_EDIT_PASTE);
+		pViewRight->SendMessage(WM_COMMAND, ID_REFRESH);
+		CString left, right;
+		pViewLeft->GetTextWithoutEmptys(0, 0, pViewLeft->GetLineCount() - 1, 0, left);
+		pViewRight->GetTextWithoutEmptys(0, 0, pViewRight->GetLineCount() - 1, 0, right);
+		ASSERT_EQ(0, pDoc->GetDiffCount()) << "l=" << l << " left=" << (const tchar_t*)left << " right=" << (const tchar_t*)right;
+		pViewRight->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
+	}
+	pViewLeft->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
+	pFrame->PostMessage(WM_CLOSE);
+	dlg.SetFormerResult(nPrevFormerResult);
+}
+
+TEST(FileCompare, Issue2702_4)
+{
+	CMessageBoxDialog dlg(nullptr, IDS_FILESSAME, 0U, 0U, IDS_FILESSAME);
+	const int nPrevFormerResult = dlg.SetFormerResult(IDOK);
+	EXPECT_TRUE(GetMainFrame()->DoFileNew(ID_MERGE_COMPARE_TEXT, 2));
+	CFrameWnd* pFrame = GetMainFrame()->GetActiveFrame();
+	EXPECT_NE(nullptr, pFrame);
+	if (pFrame == nullptr)
+		return;
+	CMergeDoc* pDoc = dynamic_cast<CMergeDoc *>(pFrame->GetActiveDocument());
+	EXPECT_NE(nullptr, pDoc);
+	if (pDoc == nullptr)
+		return;
+	CMergeEditView *pViewLeft = pDoc->GetView(0, 0);
+	String text = _T("aaa\r\nbbb\r\nccc\r\nddd\r\neee\r\n");
+	EXPECT_EQ(true, PutToClipboard2(text, pViewLeft->m_hWnd));
+	pViewLeft->SendMessage(WM_COMMAND, ID_EDIT_PASTE);
+	CMergeEditView *pViewRight = pDoc->GetView(0, 1);
+	text = _T("aaa\r\neee\r\n");
+	EXPECT_EQ(true, PutToClipboard2(text, pViewRight->m_hWnd));
+	pViewRight->SendMessage(WM_COMMAND, ID_EDIT_PASTE);
+	pViewRight->SendMessage(WM_COMMAND, ID_REFRESH);
+	for (int l = 1; l < 5; ++l)
+	{
+		EXPECT_EQ(1, pDoc->GetDiffCount()) << "l=" << l;
+		pViewRight->SetCursorPos({ 0, l });
+		text = _T("bbb\r\nccc\r\nddd\r\n");
+		EXPECT_EQ(true, PutToClipboard2(text, pViewRight->m_hWnd));
+		pViewRight->SendMessage(WM_COMMAND, ID_EDIT_PASTE);
+		pViewRight->SendMessage(WM_COMMAND, ID_REFRESH);
+		CString left, right;
+		pViewLeft->GetTextWithoutEmptys(0, 0, pViewLeft->GetLineCount() - 1, 0, left);
+		pViewRight->GetTextWithoutEmptys(0, 0, pViewRight->GetLineCount() - 1, 0, right);
+		ASSERT_EQ(0, pDoc->GetDiffCount()) << "l=" << l << " left=" << (const tchar_t*)left << " right=" << (const tchar_t*)right;
+		pViewRight->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
+	}
+	pViewLeft->SendMessage(WM_COMMAND, ID_EDIT_UNDO);
+	pFrame->PostMessage(WM_CLOSE);
+	dlg.SetFormerResult(nPrevFormerResult);
+}
+
+TEST(FolderCompare, IgnoreEOL)
+{
+	String projectRoot = getProjectRoot();
+	PathContext dirsArray[] = {
+		{
+			paths::ConcatPath(projectRoot, L"Testing/selftests/u/"),
+			paths::ConcatPath(projectRoot, L"Testing/selftests/m/")
+		},
+		{
+			paths::ConcatPath(projectRoot, L"Testing/selftests/w/"),
+			paths::ConcatPath(projectRoot, L"Testing/selftests/u/")
+		},
+		{
+			paths::ConcatPath(projectRoot, L"Testing/selftests/w/"),
+			paths::ConcatPath(projectRoot, L"Testing/selftests/m/")
+		}
+	};
+
+	for (auto& dirs : dirsArray)
+	{
+		GetOptionsMgr()->Set(OPT_CMP_METHOD, 0/* Full Contents*/);
+		GetOptionsMgr()->Set(OPT_CMP_IGNORE_EOL, true);
+		EXPECT_TRUE(GetMainFrame()->DoFileOrFolderOpen(&dirs));
+		CFrameWnd *pFrame = GetMainFrame()->GetActiveFrame();
+		CDirDoc *pDoc = dynamic_cast<CDirDoc *>(pFrame->GetActiveDocument());
+		EXPECT_NE(nullptr, pDoc);
+		if (pDoc == nullptr)
+		{
+			pFrame->PostMessage(WM_CLOSE);
+			continue;
+		}
+		CDirView *pView = pDoc->GetMainView();
+		const CDiffContext& ctxt = pDoc->GetDiffContext();
+		const CompareStats *pStats = ctxt.m_pCompareStats;
+		do { Sleep(100); } while (!pStats->IsCompareDone());
+		EXPECT_EQ(10, pStats->GetTotalItems());
+		EXPECT_EQ(10, pStats->GetCount(CompareStats::RESULT::RESULT_SAME));
+		DIFFITEM *pos = ctxt.GetFirstDiffPosition();
+		while (pos != nullptr)
+		{
+			const DIFFITEM& di = ctxt.GetNextDiffPosition(pos);
+			for (int i = 0; i < 2; ++i)
+			{
+				if (dirs[i].find(L"/w/") != String::npos)
+				{
+					EXPECT_LT(0, di.diffFileInfo[i].m_textStats.ncrlfs);
+					EXPECT_EQ(0, di.diffFileInfo[i].m_textStats.nlfs);
+					EXPECT_EQ(0, di.diffFileInfo[i].m_textStats.ncrs);
+				}
+				else if (dirs[i].find(L"/u/") != String::npos)
+				{
+					EXPECT_LT(0, di.diffFileInfo[i].m_textStats.nlfs);
+					EXPECT_EQ(0, di.diffFileInfo[i].m_textStats.ncrlfs);
+					EXPECT_EQ(0, di.diffFileInfo[i].m_textStats.ncrs);
+				}
+				else if (dirs[i].find(L"/m/") != String::npos)
+				{
+					EXPECT_LT(0, di.diffFileInfo[i].m_textStats.ncrs);
+					EXPECT_EQ(0, di.diffFileInfo[i].m_textStats.nlfs);
+					EXPECT_EQ(0, di.diffFileInfo[i].m_textStats.ncrlfs);
+				}
+			}
+		}
+
+		GetOptionsMgr()->Set(OPT_CMP_METHOD, 0/* Full Contents*/);
+		GetOptionsMgr()->Set(OPT_CMP_IGNORE_EOL, false);
+		pDoc->Rescan();
+		do { Sleep(100); } while (!pStats->IsCompareDone());
+		EXPECT_EQ(10, pStats->GetTotalItems());
+		EXPECT_EQ(10, pStats->GetCount(CompareStats::RESULT::RESULT_DIFF));
+
+		GetOptionsMgr()->Set(OPT_CMP_METHOD, 1/* Quick Contents*/);
+		GetOptionsMgr()->Set(OPT_CMP_IGNORE_EOL, true);
+		pDoc->Rescan();
+		do { Sleep(100); } while (!pStats->IsCompareDone());
+		EXPECT_EQ(10, pStats->GetTotalItems());
+		EXPECT_EQ(10, pStats->GetCount(CompareStats::RESULT::RESULT_SAME));
+
+		GetOptionsMgr()->Set(OPT_CMP_METHOD, 1/* Quick Contents*/);
+		GetOptionsMgr()->Set(OPT_CMP_IGNORE_EOL, false);
+		pDoc->Rescan();
+		do { Sleep(100); } while (!pStats->IsCompareDone());
+		EXPECT_EQ(10, pStats->GetTotalItems());
+		EXPECT_EQ(10, pStats->GetCount(CompareStats::RESULT::RESULT_DIFF));
+
+		pFrame->PostMessage(WM_CLOSE);
+	}
 }
 
 TEST(ImageCompareTest, Open)

@@ -8,7 +8,7 @@
 #include "pch.h"
 #include "stringdiffs.h"
 #define NOMINMAX
-#include <Windows.h>
+#include <windows.h>
 #include <cassert>
 #include <chrono>
 #include "CompareOptions.h"
@@ -25,7 +25,7 @@ static tchar_t BreakCharDefaults[] = _T(",.;:");
 static const int TimeoutMilliSeconds = 500;
 
 static bool isSafeWhitespace(tchar_t ch);
-static bool isWordBreak(int breakType, const tchar_t *str, int index, bool ignore_numbers);
+static bool isWordBreak(int breakType, const tchar_t *str, int index);
 
 void Init()
 {
@@ -53,10 +53,10 @@ void SetBreakChars(const tchar_t *breakChars)
 
 std::vector<wdiff>
 ComputeWordDiffs(const String& str1, const String& str2,
-	bool case_sensitive, bool eol_sensitive, int whitespace, bool ignore_numbers, int breakType, bool byte_level)
+	bool case_sensitive, EolCompareMode eol_mode, int whitespace, bool ignore_numbers, int breakType, bool byte_level)
 {
 	String strs[3] = {str1, str2, _T("")};
-	return ComputeWordDiffs(2, strs, case_sensitive, eol_sensitive, whitespace, ignore_numbers, breakType, byte_level);
+	return ComputeWordDiffs(2, strs, case_sensitive, eol_mode, whitespace, ignore_numbers, breakType, byte_level);
 }
 
 struct Comp02Functor
@@ -92,12 +92,12 @@ struct Comp02Functor
  */
 std::vector<wdiff>
 ComputeWordDiffs(int nFiles, const String *str,
-	bool case_sensitive, bool eol_sensitive, int whitespace, bool ignore_numbers, int breakType, bool byte_level)
+	bool case_sensitive, EolCompareMode eol_mode, int whitespace, bool ignore_numbers, int breakType, bool byte_level)
 {
 	std::vector<wdiff> diffs;
 	if (nFiles == 2)
 	{
-		stringdiffs sdiffs(str[0], str[1], case_sensitive, eol_sensitive, whitespace, ignore_numbers, breakType, &diffs);
+		stringdiffs sdiffs(str[0], str[1], case_sensitive, static_cast<stringdiffs::EolCompareMode>(eol_mode), whitespace, ignore_numbers, breakType, &diffs);
 		// Hash all words in both lines and then compare them word by word
 		// storing differences into m_wdiffs
 		sdiffs.BuildWordDiffList();
@@ -113,7 +113,7 @@ ComputeWordDiffs(int nFiles, const String *str,
 	{
 		if (str[0].empty())
 		{
-			stringdiffs sdiffs(str[1], str[2], case_sensitive, eol_sensitive, whitespace, ignore_numbers, breakType, &diffs);
+			stringdiffs sdiffs(str[1], str[2], case_sensitive, static_cast<stringdiffs::EolCompareMode>(eol_mode), whitespace, ignore_numbers, breakType, &diffs);
 			sdiffs.BuildWordDiffList();
 			if (byte_level)
 				sdiffs.wordLevelToByteLevel();
@@ -131,7 +131,7 @@ ComputeWordDiffs(int nFiles, const String *str,
 		}
 		else if (str[1].empty())
 		{
-			stringdiffs sdiffs(str[0], str[2], case_sensitive, eol_sensitive, whitespace, ignore_numbers, breakType, &diffs);
+			stringdiffs sdiffs(str[0], str[2], case_sensitive, static_cast<stringdiffs::EolCompareMode>(eol_mode), whitespace, ignore_numbers, breakType, &diffs);
 			sdiffs.BuildWordDiffList();
 			if (byte_level)
 				sdiffs.wordLevelToByteLevel();
@@ -149,7 +149,7 @@ ComputeWordDiffs(int nFiles, const String *str,
 		}
 		else if (str[2].empty())
 		{
-			stringdiffs sdiffs(str[0], str[1], case_sensitive, eol_sensitive, whitespace, ignore_numbers, breakType, &diffs);
+			stringdiffs sdiffs(str[0], str[1], case_sensitive, static_cast<stringdiffs::EolCompareMode>(eol_mode), whitespace, ignore_numbers, breakType, &diffs);
 			sdiffs.BuildWordDiffList();
 			if (byte_level)
 				sdiffs.wordLevelToByteLevel();
@@ -168,8 +168,8 @@ ComputeWordDiffs(int nFiles, const String *str,
 		else
 		{
 			std::vector<wdiff> diffs10, diffs12;
-			stringdiffs sdiffs10(str[1], str[0], case_sensitive, eol_sensitive, 0, ignore_numbers, breakType, &diffs10);
-			stringdiffs sdiffs12(str[1], str[2], case_sensitive, eol_sensitive, 0, ignore_numbers, breakType, &diffs12);
+			stringdiffs sdiffs10(str[1], str[0], case_sensitive, static_cast<stringdiffs::EolCompareMode>(eol_mode), 0, ignore_numbers, breakType, &diffs10);
+			stringdiffs sdiffs12(str[1], str[2], case_sensitive, static_cast<stringdiffs::EolCompareMode>(eol_mode), 0, ignore_numbers, breakType, &diffs12);
 			// Hash all words in both lines and then compare them word by word
 			// storing differences into m_wdiffs
 			sdiffs10.BuildWordDiffList();
@@ -191,15 +191,27 @@ ComputeWordDiffs(int nFiles, const String *str,
 }
 
 int Compare(const String& str1, const String& str2,
-	bool case_sensitive, bool eol_sensitive, int whitespace, bool ignore_numbers)
+	bool case_sensitive, EolCompareMode eol_mode, int whitespace, bool ignore_numbers)
 {
-	if (case_sensitive && eol_sensitive && whitespace == WHITESPACE_COMPARE_ALL && !ignore_numbers)
+	if (case_sensitive && eol_mode == EOL_STRICT && whitespace == WHITESPACE_COMPARE_ALL && !ignore_numbers)
 		return str2.compare(str1);
 	String s1 = str1, s2 = str2;
 	if (!case_sensitive)
 	{
 		s1 = strutils::makelower(s1);
 		s2 = strutils::makelower(s2);
+	}
+	if (eol_mode == EOL_IGNORE)
+	{
+		strutils::replace_chars(s1, _T("\r\n"), _T("\n"));
+		strutils::replace_chars(s2, _T("\r\n"), _T("\n"));
+	}
+	else if (eol_mode == EOL_AS_SPACE)
+	{
+		strutils::replace(s1, _T("\r\n"), _T(" "));
+		strutils::replace_chars(s1, _T("\r\n"), _T(" "));
+		strutils::replace(s2, _T("\r\n"), _T(" "));
+		strutils::replace_chars(s2, _T("\r\n"), _T(" "));
 	}
 	if (whitespace == WHITESPACE_IGNORE_CHANGE)
 	{
@@ -210,11 +222,6 @@ int Compare(const String& str1, const String& str2,
 	{
 		strutils::replace_chars(s1, _T(" \t"), _T(""));
 		strutils::replace_chars(s2, _T(" \t"), _T(""));
-	}
-	if (!eol_sensitive)
-	{
-		strutils::replace_chars(s1, _T("\r\n"), _T("\n"));
-		strutils::replace_chars(s2, _T("\r\n"), _T("\n"));
 	}
 	if (ignore_numbers)
 	{
@@ -228,14 +235,14 @@ int Compare(const String& str1, const String& str2,
  * @brief stringdiffs constructor simply loads all members from arguments
  */
 stringdiffs::stringdiffs(const String & str1, const String & str2,
-	bool case_sensitive, bool eol_sensitive, int whitespace, bool ignore_numbers, int breakType,
+	bool case_sensitive, EolCompareMode eol_mode, int whitespace, bool ignore_numbers, int breakType,
 	std::vector<wdiff> * pDiffs)
 : m_str1(str1)
 , m_str2(str2)
 , m_whitespace(whitespace)
 , m_breakType(breakType)
 , m_case_sensitive(case_sensitive)
-, m_eol_sensitive(eol_sensitive)
+, m_eol_mode(eol_mode)
 , m_ignore_numbers(ignore_numbers)
 , m_pDiffs(pDiffs)
 , m_matchblock(true) // Change to false to get word to word compare
@@ -419,67 +426,59 @@ stringdiffs::BuildWordsArray(const String & str) const
 
 	size_t sLen = str.length();
 	assert(sLen < INT_MAX);
-	int iLen = static_cast<int>(sLen);
 
-	// state when we are looking for next word
-inspace:
-	if (isSafeWhitespace(str[i])) 
-	{
-		i = pIterChar->next();
-		goto inspace;
-	}
-	if (begin < i)
-	{
-		// just finished a word
-		// e is first word character (space or at end)
-		int e = i - 1;
-
-		words.push_back(word(begin, e, dlspace, Hash(str, begin, e, 0)));
-	}
-	if (i == iLen)
+	if (str.empty())
 		return words;
-	begin = i;
-	goto inword;
 
-	// state when we are inside a word
-inword:
-	bool atspace=false;
-	if (i == iLen || ((atspace = isSafeWhitespace(str[i])) != 0) || isWordBreak(m_breakType, str.c_str(), i, m_ignore_numbers))
+	int break_type = 0;
+	int prev_break_type = 0;
+	int iLen = static_cast<int>(sLen);
+	for (; i < iLen;)
 	{
-		if (begin<i)
+		break_type = dlword;
+		tchar_t ch = str[i];
+		if (ch == '\r' || ch == '\n')
 		{
-			// just finished a word
-			// e is first non-word character (space or at end)
-			int e = i-1;
-			
-			words.push_back(word(begin, e, dlword, Hash(str, begin, e, 0)));
+			if (m_eol_mode == EOL_AS_SPACE)
+				break_type = dlspace;
+			else
+				break_type = dleol;
 		}
-		if (i == iLen)
+		else if (isSafeWhitespace(ch))
 		{
-			return words;
+			break_type = dlspace;
 		}
-		else if (atspace)
+		else if (isWordBreak(m_breakType, str.c_str(), i))
 		{
+			break_type = dlbreak;
+		}
+		else if (m_ignore_numbers && tc::istdigit(ch))
+		{
+			break_type = dlnumber;
+		}
+		if (i > 0 && (break_type != prev_break_type || break_type == dlbreak || (prev_break_type == dleol && !(str[i - 1] == '\r' && ch == '\n'))))
+		{
+			words.push_back(word(begin, i - 1, prev_break_type, Hash(str, begin, i - 1, 0)));
 			begin = i;
-			goto inspace;
+		}
+		if (m_eol_mode == EOL_AS_SPACE && break_type == dlspace)
+		{
+			for (; i < iLen; i++)
+			{
+				tchar_t ch2 = str[i];
+				if (ch2 != '\r' && ch2 != '\n' && !isSafeWhitespace(ch2))
+					break;
+			}
+			pIterChar->preceding(i);
 		}
 		else
 		{
-			// start a new word because we hit a non-whitespace word break (eg, a comma)
-			// but, we have to put each word break character into its own word
-			int break_type = (m_ignore_numbers && tc::istdigit(str[i]))
-				? dlnumber
-				: dlbreak;
-
-			int inext = pIterChar->next();
-			words.push_back(word(i, inext - 1, break_type, Hash(str, i, inext - 1, 0)));
-			i = inext;
-			begin = i;
-			goto inword;
+			i = pIterChar->next();
 		}
+		prev_break_type = break_type;
 	}
-	i = pIterChar->next();
-	goto inword; // safe even if we're at the end or no longer in a word
+	words.push_back(word(begin, i - 1, break_type, Hash(str, begin, i - 1, 0)));
+	return words;
 }
 
 /**
@@ -490,13 +489,6 @@ inword:
 void
 stringdiffs::PopulateDiffs()
 {
-	auto IsEOLorEmpty = [](const String& text, size_t begin, size_t end) -> bool {
-		if (end - begin + 1 > 2)
-			return false;
-		String str = text.substr(begin, end - begin + 1);
-		return (str.empty() || str == _T("\r\n") || str == _T("\n") || str == _T("\r"));
-	};
-	
 	for (int i=0; i< (int)m_wdiffs.size(); ++i)
 	{
 		bool skipIt = false;
@@ -512,13 +504,6 @@ stringdiffs::PopulateDiffs()
 				m_wdiffs[i+1].begin[1] = m_wdiffs[i].begin[1];
 				skipIt = true;
 			}
-		}
-		else
-		{
-			if (!m_eol_sensitive &&
-				IsEOLorEmpty(m_str1, m_wdiffs[i].begin[0], m_wdiffs[i].end[0]) &&
-				IsEOLorEmpty(m_str2, m_wdiffs[i].begin[1], m_wdiffs[i].end[1]))
-				skipIt = true;
 		}
 		if (!skipIt)
 		{
@@ -569,7 +554,7 @@ stringdiffs::Hash(const String & str, int begin, int end, unsigned h) const
 bool
 stringdiffs::AreWordsSame(const word& word1, const word& word2) const
 {
-	if (this->m_whitespace != WHITESPACE_COMPARE_ALL)
+	if (m_whitespace != WHITESPACE_COMPARE_ALL)
 	{
 		if (IsSpace(word1) && IsSpace(word2))
 			return true;
@@ -578,6 +563,24 @@ stringdiffs::AreWordsSame(const word& word1, const word& word2) const
 	{
 		if (tc::istdigit(m_str1[word1.start]) && tc::istdigit(m_str2[word2.start]))
 			return true;
+	}
+	if (m_eol_mode == EOL_IGNORE)
+	{
+		if (IsEOL(word1) && IsEOL(word2))
+			return true;
+	}
+	else if (m_eol_mode == EOL_AS_SPACE)
+	{
+		if (IsSpace(word1) && IsSpace(word2))
+		{
+			String wordstr1 = m_str1.substr(word1.start, word1.length());
+			String wordstr2 = m_str2.substr(word2.start, word2.length());
+			strutils::replace(wordstr1, _T("\r\n"), _T(" "));
+			strutils::replace_chars(wordstr1, _T("\r\n"), _T(" "));
+			strutils::replace(wordstr2, _T("\r\n"), _T(" "));
+			strutils::replace_chars(wordstr2, _T("\r\n"), _T(" "));
+			return (wordstr1 == wordstr2);
+		}
 	}
 
 	if (word1.hash != word2.hash)
@@ -780,18 +783,16 @@ static inline bool IsLeadByte(tchar_t ch)
 static inline bool
 isSafeWhitespace(tchar_t ch)
 {
-	return tc::istspace((unsigned)ch) && !IsLeadByte(ch);
+	return tc::istspace((unsigned)ch) && !IsLeadByte(ch) && (ch != '\r' && ch != '\n');
 }
 
 /**
  * @brief Is it a non-whitespace wordbreak character (ie, punctuation)?
  */
 static bool
-isWordBreak(int breakType, const tchar_t *str, int index, bool ignore_numbers)
+isWordBreak(int breakType, const tchar_t *str, int index)
 {
 	tchar_t ch = str[index];
-	if (ignore_numbers && tc::istdigit(ch))
-		return true;
 	// breakType==1 means break also on punctuation
 	if ((ch & 0xff00) == 0)
 	{

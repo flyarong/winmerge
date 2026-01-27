@@ -100,7 +100,7 @@ int CPatchTool::CreatePatch()
 
 		if (!paths::CreateIfNeeded(paths::GetPathOnly(dlgPatch.m_fileResult)))
 		{
-			LangMessageBox(IDS_FOLDER_NOTEXIST, MB_OK | MB_ICONSTOP);
+			I18n::MessageBox(IDS_FOLDER_NOTEXIST, MB_OK | MB_ICONSTOP);
 			return 0;
 		}
 
@@ -143,8 +143,8 @@ int CPatchTool::CreatePatch()
 		for (size_t index = 0; index < fileCount; index++)
 		{
 			const PATCHFILES& tFiles = fileList[index];
-			String filename1 = tFiles.lfile.length() == 0 ? _T("NUL") : tFiles.lfile;
-			String filename2 = tFiles.rfile.length() == 0 ? _T("NUL") : tFiles.rfile;
+			String filename1 = tFiles.lfile.length() == 0 ? paths::NATIVE_NULL_DEVICE_NAME : tFiles.lfile;
+			String filename2 = tFiles.rfile.length() == 0 ? paths::NATIVE_NULL_DEVICE_NAME : tFiles.rfile;
 			
 			// Set up DiffWrapper
 			m_diffWrapper.SetPaths(PathContext(filename1, filename2), false);
@@ -155,7 +155,7 @@ int CPatchTool::CreatePatch()
 
 			if (!bDiffSuccess)
 			{
-				LangMessageBox(IDS_FILEERROR, MB_ICONSTOP);
+				I18n::MessageBox(IDS_FILEERROR, MB_ICONSTOP);
 				bResult = false;
 				break;
 			}
@@ -163,7 +163,7 @@ int CPatchTool::CreatePatch()
 			{
 				if (!bShowedBinaryMessage)
 				{
-					LangMessageBox(IDS_CANNOT_CREATE_BINARYPATCH, MB_ICONWARNING);
+					I18n::MessageBox(IDS_CANNOT_CREATE_BINARYPATCH, MB_ICONWARNING);
 					bShowedBinaryMessage = true;
 				}
 			}
@@ -185,8 +185,8 @@ int CPatchTool::CreatePatch()
 
 		if (bResult && writeFileCount > 0)
 		{
-			LangMessageBox(IDS_DIFF_SUCCEEDED, MB_ICONINFORMATION|MB_DONT_DISPLAY_AGAIN,
-				            IDS_DIFF_SUCCEEDED);
+			AfxMessageBox((_("Patch file written.") + _T("\n") + dlgPatch.m_fileResult).c_str(),
+				MB_ICONINFORMATION | MB_DONT_DISPLAY_AGAIN, IDS_DIFF_SUCCEEDED);
 			
 			m_sPatchFile = dlgPatch.m_fileResult;
 			m_bOpenToEditor = dlgPatch.m_openToEditor;
@@ -330,7 +330,7 @@ int CPatchTool::GetItemsForPatchList(const PathContext& paths, const String subd
 
 	DirItemArray dirs[2], aFiles[2];
 	for (int nIndex = 0; nIndex < nDirs; nIndex++)
-		LoadAndSortFiles(sDir[nIndex], &dirs[nIndex], &aFiles[nIndex], false);
+		DirTravel::LoadAndSortFiles(sDir[nIndex], &dirs[nIndex], &aFiles[nIndex], false);
 
 	{
 		int nIndex;

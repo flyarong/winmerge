@@ -13,16 +13,17 @@
 #include "PathContext.h"
 #include "FileLocation.h"
 #include "IMergeDoc.h"
+#include "IMDITab.h"
 #include "FileTransform.h"
 
-class CDirDoc;
+struct IDirDoc;
 class CHexMergeFrame;
 class CHexMergeView;
 
 /**
  * @brief Document class for bytewise merging two files presented as hexdumps
  */
-class CHexMergeDoc : public CDocument, public IMergeDoc
+class CHexMergeDoc : public CDocument, public IMergeDoc, public IMDITab
 {
 public:
 	enum class BUFFERTYPE
@@ -62,21 +63,24 @@ public:
 // Implementation
 public:
 	~CHexMergeDoc();
-	int UpdateDiffItem(CDirDoc * pDirDoc);
+	int UpdateLastCompareResult();
 	bool PromptAndSaveIfNeeded(bool bAllowCancel);
-	CDirDoc* GetDirDoc() const override { return m_pDirDoc; };
-	void SetDirDoc(CDirDoc * pDirDoc) override;
-	void DirDocClosing(CDirDoc * pDirDoc) override;
+	IDirDoc* GetDirDoc() const override { return m_pDirDoc; };
+	void SetDirDoc(IDirDoc * pDirDoc) override;
+	void DirDocClosing(IDirDoc * pDirDoc) override;
 	bool CloseNow() override;
 	bool GenerateReport(const String& sFileName) const override { return true; }
 	const PackingInfo* GetUnpacker() const override { return &m_infoUnpacker; };
 	PackingInfo* GetUnpacker() { return &m_infoUnpacker; };
 	void SetUnpacker(const PackingInfo* infoUnpacker) override { if (infoUnpacker) m_infoUnpacker = *infoUnpacker;  };
 	const PrediffingInfo* GetPrediffer() const override { return nullptr; };
+	const EditorScriptInfo* GetEditorScript() const override { return nullptr; };
 	int GetFileCount() const override { return m_filePaths.GetSize(); }
 	String GetPath(int pane) const override { return m_filePaths[pane]; }
 	bool GetReadOnly(int pane) const override;
 	CString GetTooltipString() const override;
+	int GetDiffCount() const override { return m_hasDiff.value_or(false) ? -1 : 0; }
+	int GetTrivialCount() const override { return 0; }
 	CHexMergeFrame * GetParentFrame() const;
 	void UpdateHeaderPath(int pane);
 	void RefreshOptions();
@@ -85,8 +89,19 @@ public:
 	void ChangeFile(int nBuffer, const String& path, int nLineIndex = -1);
 	void CheckFileChanged(void) override;
 	String GetDescription(int pane) const override { return m_strDesc[pane]; };
-	void SetDescription(int pane, const String& strDesc) {  m_strDesc[pane] = strDesc; };
+	void SetDescription(int pane, const String& strDesc) {
+		if (m_strDesc[pane] != strDesc)
+		{
+			m_strDesc[pane] = strDesc;
+			if (m_nBufferType[pane] == BUFFERTYPE::NORMAL)
+				m_nBufferType[pane] = BUFFERTYPE::NORMAL_NAMED;
+		}
+	}
 	void SaveAs(int nBuffer, bool packing = true) { DoFileSaveAs(nBuffer, packing); }
+	const String& GetSaveAsPath() const { return m_strSaveAsPath; }
+	void SetSaveAsPath(const String& strSaveAsPath) { m_strSaveAsPath = strSaveAsPath; }
+	bool IsModified() const;
+
 private:
 	bool DoFileSave(int nBuffer);
 	bool DoFileSaveAs(int nBuffer, bool packing = true);
@@ -95,10 +110,12 @@ private:
 // Implementation data
 protected:
 	CHexMergeView * m_pView[3]; /**< Pointer to left/right view */
-	CDirDoc * m_pDirDoc;
+	IDirDoc * m_pDirDoc;
 	String m_strDesc[3]; /**< Left/right side description text */
 	BUFFERTYPE m_nBufferType[3];
 	PackingInfo m_infoUnpacker;
+	String m_strSaveAsPath; /**< "3rd path" where output saved if given */
+	std::optional<bool> m_hasDiff;
 
 // Generated message map functions
 protected:

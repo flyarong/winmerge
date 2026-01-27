@@ -2,9 +2,8 @@
 #include "MergeApp.h"
 #include "Merge.h"
 #include "VersionInfo.h"
-#include "paths.h"
 #include "Constants.h"
-#include "unicoder.h"
+#include "Logger.h"
 
 // Get user language description of error, if available
 String GetSysError(int nerr /* =-1 */)
@@ -45,57 +44,24 @@ COptionsMgr * GetOptionsMgr()
 // Send message to log and debug window
 void LogErrorString(const String& sz)
 {
-	if (sz.empty()) return;
-	CString now = COleDateTime::GetCurrentTime().Format();
-	TRACE(_T("%s: %s\n"), (const tchar_t*)now, sz.c_str());
+	RootLogger::Error(sz);
 }
 
 // Send message to log and debug window
 void LogErrorStringUTF8(const std::string& sz)
 {
-	if (sz.empty()) return;
-	String str = ucr::toTString(sz);
-	CString now = COleDateTime::GetCurrentTime().Format();
-	TRACE(_T("%s: %s\n"), (const tchar_t*)now, str.c_str());
-}
-
-/**
- * @brief Load string resource and return as CString.
- * @param [in] id Resource string ID.
- * @return Resource string as CString.
- */
-String LoadResString(unsigned id)
-{
-	return theApp.LoadString(id);
-}
-
-String tr(const std::string &str)
-{
-	String translated_str;
-	theApp.TranslateString(str, translated_str);
-	return translated_str;
-}
-
-String tr(const std::wstring &str)
-{
-	String translated_str;
-	theApp.TranslateString(str, translated_str);
-	return translated_str;
-}
-
-String tr(const char *msgctxt, const std::string &str)
-{
-	String translated_str;
-	if (msgctxt)
-		theApp.TranslateString("\x01\"" + std::string(msgctxt) + "\"" + str, translated_str);
-	else
-		theApp.TranslateString(str, translated_str);
-	return translated_str;
+	RootLogger::Error(sz);
 }
 
 void AppErrorMessageBox(const String& msg)
 {
 	AppMsgBox::error(msg);
+	RootLogger::Error(msg);
+}
+
+void* AppGetMainHWND()
+{
+	return AfxGetMainWnd()->GetSafeHwnd();
 }
 
 namespace AppMsgBox
@@ -167,12 +133,12 @@ AboutInfo::AboutInfo()
 
 	if (version.find(_T(" - ")) != String::npos)
 	{
-		strutils::replace(version, _T(" - "), _T("\n"));
+		strutils::replace(version, _T(" - "), _T("\r\n"));
 		version += _T(" ");
 	}
 	else
 	{
-		version += _T("\n");
+		version += _T("\r\n");
 	}
 
 #if defined _M_IX86
@@ -195,10 +161,10 @@ AboutInfo::AboutInfo()
 	version += _T(")");
 #endif
 
-	copyright = _("WinMerge comes with ABSOLUTELY NO WARRANTY. This is free software and you are welcome to redistribute it under certain circumstances; see the GNU General Public License in the Help menu for details.");
+	copyright = _("WinMerge comes with ABSOLUTELY NO WARRANTY. It is free software and can be redistributed under the conditions of the GNU General Public License - see the Help menu for details.");
 	copyright += _T("\n");
 	copyright += verinfo.GetLegalCopyright();
-	copyright += _T(" - All rights reserved.");
+	copyright += _(" - All rights reserved.");
 
 	website = WinMergeURL;
 }

@@ -45,6 +45,7 @@ class EDITPADC_CLASS CFindTextDlg : public CDialog
 private :
     void UpdateControls();
     CCrystalTextView * m_pBuddy;
+    CFont m_font;
 
     // Construction
 public :
@@ -93,7 +94,6 @@ protected :
     virtual void OnCancel ();
     afx_msg void OnRegExp ();
     afx_msg void OnFindPrev ();
-    virtual void PostNcDestroy ();
     //}}AFX_MSG
     DECLARE_MESSAGE_MAP ()
   };

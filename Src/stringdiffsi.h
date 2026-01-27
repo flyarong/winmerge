@@ -23,8 +23,8 @@ enum
 {
 	dlword = 0,
 	dlspace,
+	dleol,
 	dlbreak, 
-	dlinsert,
 	dlnumber,
 };
 /**
@@ -46,8 +46,10 @@ struct wdiff;
 class stringdiffs
 {
 public:
+	enum EolCompareMode { EOL_STRICT = 0, EOL_IGNORE = 1, EOL_AS_SPACE = 2 };
+
 	stringdiffs(const String & str1, const String & str2,
-		bool case_sensitive, bool eol_sensitive, int whitespace, bool ignore_numbers, int breakType,
+		bool case_sensitive, EolCompareMode eol_mode, int whitespace, bool ignore_numbers, int breakType,
 		std::vector<wdiff> * pDiffs);
 
 	~stringdiffs();
@@ -92,18 +94,11 @@ private:
 		return (word1.bBreak == dlnumber);
 	}
 	/**
-	 * @brief Is this block a break?
+	 * @brief Is this block an EOL?
 	 */
-	inline bool IsBreak(const word & word1) const
+	inline bool IsEOL(const word & word1) const
 	{
-		return (word1.bBreak == dlbreak || word1.bBreak == dlspace);
-	}
-	/**
-	 * @brief Is this block an empty (insert) one?
-	 */
-	inline bool IsInsert(const word & word1) const
-	{
-		return (word1.bBreak == dlinsert);
+		return (word1.bBreak == dleol);
 	}
 	bool BuildWordDiffList_DP();
 	int dp(std::vector<char> & edscript);
@@ -120,7 +115,7 @@ private:
 	int m_whitespace;
 	int m_breakType;
 	bool m_case_sensitive;
-	bool m_eol_sensitive;
+	EolCompareMode m_eol_mode;
 	bool m_ignore_numbers = false;
 	bool m_matchblock;
 	std::vector<wdiff> * m_pDiffs;

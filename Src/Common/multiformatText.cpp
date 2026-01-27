@@ -15,7 +15,6 @@
 #include "pch.h"
 #define NOMINMAX
 #include "multiformatText.h"
-#include <vector>
 #include <algorithm>
 #include <cstring>
 #include <cassert>
@@ -32,7 +31,7 @@
 #include "codepage_detect.h"
 #include "Environment.h"
 #include "TFile.h"
-#include "MergeApp.h"
+#include "Logger.h"
 
 using Poco::SharedMemory;
 using Poco::FileOutputStream;
@@ -68,7 +67,7 @@ void storageForPlugins::SetDataFileAnsi(const String& filename, bool bOverwrite 
 	encoding.SetCodepage(ucr::getDefaultCodepage());
 	SetDataFileEncoding(filename, encoding, bOverwrite); 
 }
-void storageForPlugins::SetDataFileEncoding(const String& filename, FileTextEncoding encoding, bool bOverwrite /*= false*/)
+void storageForPlugins::SetDataFileEncoding(const String& filename, const FileTextEncoding& encoding, bool bOverwrite /*= false*/)
 {
 	m_filename = filename;
 	m_nChangedValid = 0;
@@ -104,7 +103,7 @@ const tchar_t *storageForPlugins::GetDestFileName()
 			}
 			catch (Exception& e)
 			{
-				LogErrorStringUTF8(e.displayText());
+				RootLogger::Error(e.displayText());
 			}
 		}
 	}
@@ -126,7 +125,7 @@ void storageForPlugins::ValidateNewFile()
 		}
 		catch (Exception& e)
 		{
-			LogErrorStringUTF8(e.displayText());
+			RootLogger::Error(e.displayText());
 		}
 		// we may reuse the temp filename
 		// tempFilenameDst.Empty();
@@ -143,7 +142,7 @@ void storageForPlugins::ValidateNewFile()
 			}
 			catch (Exception& e)
 			{
-				LogErrorStringUTF8(e.displayText());
+				RootLogger::Error(e.displayText());
 			}
 		}
 		else

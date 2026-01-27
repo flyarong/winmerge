@@ -24,13 +24,16 @@
 #define new DEBUG_NEW
 #endif
 
-//  Rust keywords
+//  Rust keywords (Version 1.72.0)
+// (See https://doc.rust-lang.org/book/appendix-01-keywords.html and https://doc.rust-lang.org/std/index.html)
 static const tchar_t * s_apszRustKeywordList[] =
   {
     _T ("Self"),
     _T ("abstract"),
     _T ("alignof"),
     _T ("as"),
+    _T ("async"),
+    _T ("await"),
     _T ("become"),
     _T ("box"),
     _T ("break"),
@@ -38,6 +41,7 @@ static const tchar_t * s_apszRustKeywordList[] =
     _T ("continue"),
     _T ("crate"),
     _T ("do"),
+    _T ("dyn"),
     _T ("else"),
     _T ("enum"),
     _T ("extern"),
@@ -70,8 +74,10 @@ static const tchar_t * s_apszRustKeywordList[] =
     _T ("super"),
     _T ("trait"),
     _T ("true"),
+    _T ("try"),
     _T ("type"),
     _T ("typeof"),
+    _T ("union"),
     _T ("unsafe"),
     _T ("unsized"),
     _T ("use"),
@@ -90,12 +96,14 @@ static const tchar_t * s_apszUser1KeywordList[] =
     _T ("char"),
     _T ("f32"),
     _T ("f64"),
+    _T ("i128"),
     _T ("i16"),
     _T ("i32"),
     _T ("i64"),
     _T ("i8"),
     _T ("isize"),
     _T ("str"),
+    _T ("u128"),
     _T ("u16"),
     _T ("u32"),
     _T ("u64"),
@@ -113,6 +121,43 @@ static bool
 IsUser1Keyword (const tchar_t *pszChars, int nLength)
 {
   return ISXKEYWORD (s_apszUser1KeywordList, pszChars, nLength);
+}
+
+static inline void
+DefineIdentiferBlock(const tchar_t *pszChars, int nLength, CrystalLineParser::TEXTBLOCK * pBuf, int &nActualItems, int nIdentBegin, int I)
+{
+  if (IsRustKeyword (pszChars + nIdentBegin, I - nIdentBegin))
+    {
+      DEFINE_BLOCK (nIdentBegin, COLORINDEX_KEYWORD);
+    }
+  else if (IsUser1Keyword (pszChars + nIdentBegin, I - nIdentBegin))
+    {
+      DEFINE_BLOCK (nIdentBegin, COLORINDEX_USER1);
+    }
+  else if (CrystalLineParser::IsXNumber (pszChars + nIdentBegin, I - nIdentBegin))
+    {
+      DEFINE_BLOCK (nIdentBegin, COLORINDEX_NUMBER);
+    }
+  else
+    {
+      bool bFunction = false;
+
+      for (int j = I; j < nLength; j++)
+        {
+          if (!xisspace (pszChars[j]) && pszChars[j] != '!')
+            {
+              if (pszChars[j] == '(')
+                {
+                  bFunction = true;
+                }
+              break;
+            }
+        }
+      if (bFunction)
+        {
+          DEFINE_BLOCK (nIdentBegin, COLORINDEX_FUNCNAME);
+        }
+    }
 }
 
 unsigned
@@ -288,38 +333,7 @@ out:
         {
           if (nIdentBegin >= 0)
             {
-              if (IsRustKeyword (pszChars + nIdentBegin, I - nIdentBegin))
-                {
-                  DEFINE_BLOCK (nIdentBegin, COLORINDEX_KEYWORD);
-                }
-              else if (IsUser1Keyword (pszChars + nIdentBegin, I - nIdentBegin))
-                {
-                  DEFINE_BLOCK (nIdentBegin, COLORINDEX_USER1);
-                }
-              else if (IsXNumber (pszChars + nIdentBegin, I - nIdentBegin))
-                {
-                  DEFINE_BLOCK (nIdentBegin, COLORINDEX_NUMBER);
-                }
-              else
-                {
-                  bool bFunction = false;
-
-                  for (int j = I; j < nLength; j++)
-                    {
-                      if (!xisspace (pszChars[j]) && pszChars[j] != '!')
-                        {
-                          if (pszChars[j] == '(')
-                            {
-                              bFunction = true;
-                            }
-                          break;
-                        }
-                    }
-                  if (bFunction)
-                    {
-                      DEFINE_BLOCK (nIdentBegin, COLORINDEX_FUNCNAME);
-                    }
-                }
+              DefineIdentiferBlock(pszChars, nLength, pBuf, nActualItems, nIdentBegin, I);
               bRedefineBlock = true;
               bDecIndex = true;
               nIdentBegin = -1;
@@ -329,38 +343,7 @@ out:
 
   if (nIdentBegin >= 0)
     {
-      if (IsRustKeyword (pszChars + nIdentBegin, I - nIdentBegin))
-        {
-          DEFINE_BLOCK (nIdentBegin, COLORINDEX_KEYWORD);
-        }
-      else if (IsUser1Keyword (pszChars + nIdentBegin, I - nIdentBegin))
-        {
-          DEFINE_BLOCK (nIdentBegin, COLORINDEX_USER1);
-        }
-      else if (IsXNumber (pszChars + nIdentBegin, I - nIdentBegin))
-        {
-          DEFINE_BLOCK (nIdentBegin, COLORINDEX_NUMBER);
-        }
-      else
-        {
-          bool bFunction = false;
-
-          for (int j = I; j < nLength; j++)
-            {
-              if (!xisspace (pszChars[j]) && pszChars[j] != '!')
-                {
-                  if (pszChars[j] == '(')
-                    {
-                      bFunction = true;
-                    }
-                  break;
-                }
-            }
-          if (bFunction)
-            {
-              DEFINE_BLOCK (nIdentBegin, COLORINDEX_FUNCNAME);
-            }
-        }
+      DefineIdentiferBlock(pszChars, nLength, pBuf, nActualItems, nIdentBegin, I);
     }
 
   dwCookie &= COOKIE_EXT_COMMENT | COOKIE_RAWSTRING | COOKIE_STRING | 0xFF000000;

@@ -1,6 +1,7 @@
 #include <StdAfx.h>
-#include "Merge.h"
 #include "TrDialogs.h"
+#include "Logger.h"
+#include "DarkModeLib.h"
 
 IMPLEMENT_DYNAMIC(CTrDialog, CDialog)
 IMPLEMENT_DYNAMIC(CTrPropertyPage, CPropertyPage)
@@ -28,16 +29,48 @@ void StaticDlgUtils::WildcardRemoveDuplicatePatterns(String& patterns)
 
 BOOL CTrDialog::OnInitDialog()
 {
-	theApp.TranslateDialog(m_hWnd);
+	I18n::TranslateDialog(m_hWnd);
 	__super::OnInitDialog();
+	DarkMode::setDarkWndSafeEx(GetSafeHwnd(), true);
 	return TRUE;
+}
+
+void CTrDialog::OnOK()
+{
+	RootLogger::Info(GetTitleText() + _T(": ") + _("OK"));
+	__super::OnOK();
+}
+
+void CTrDialog::OnCancel()
+{
+	RootLogger::Info(GetTitleText() + _T(": ") + _("Cancel"));
+	__super::OnCancel();
 }
 
 BOOL CTrPropertyPage::OnInitDialog()
 {
-	theApp.TranslateDialog(m_hWnd);
+	I18n::TranslateDialog(m_hWnd);
 	__super::OnInitDialog();
+	if (HWND hSelf = GetSafeHwnd())
+	{
+		DarkMode::setWindowCtlColorSubclass(hSelf);
+		DarkMode::setChildCtrlsSubclassAndThemeEx(hSelf, true, true);
+	}
+
+	DarkMode::setDarkWndSafeEx(*GetParent(), true);
 	return TRUE;
+}
+
+void CTrPropertyPage::OnOK()
+{
+	RootLogger::Info(GetTitleText() + _T(": ") + _("OK"));
+	__super::OnOK();
+}
+
+void CTrPropertyPage::OnCancel()
+{
+	RootLogger::Info(GetTitleText() + _T(": ") + _("Cancel"));
+	__super::OnCancel();
 }
 
 BOOL CTrDialogBar::Create(CWnd* pParentWnd, LPCTSTR lpszTemplateName,
@@ -45,7 +78,7 @@ BOOL CTrDialogBar::Create(CWnd* pParentWnd, LPCTSTR lpszTemplateName,
 {
 	BOOL bSucceeded = __super::Create(pParentWnd, lpszTemplateName, nStyle, nID);
 	if (bSucceeded)
-		theApp.TranslateDialog(m_hWnd);
+		I18n::TranslateDialog(m_hWnd);
 	return bSucceeded;
 }
 
@@ -54,6 +87,6 @@ BOOL CTrDialogBar::Create(CWnd* pParentWnd, UINT nIDTemplate,
 {
 	BOOL bSucceeded = __super::Create(pParentWnd, nIDTemplate, nStyle, nID);
 	if (bSucceeded)
-		theApp.TranslateDialog(m_hWnd);
+		I18n::TranslateDialog(m_hWnd);
 	return bSucceeded;
 }

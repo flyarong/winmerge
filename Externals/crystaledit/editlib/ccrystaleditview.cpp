@@ -1528,7 +1528,7 @@ OnEditReplace ()
       GetSelection (m_ptSavedSelStart, m_ptSavedSelEnd);
       m_bSelectionPushed = true;
 
-      m_pEditReplaceDlg->SetScope(true);       //  Replace in current selection
+      m_pEditReplaceDlg->SetScope(m_ptSavedSelStart.y != m_ptSavedSelEnd.y);       //  Replace in current selection if multiple lines are selected
       m_pEditReplaceDlg->m_ptCurrentPos = m_ptSavedSelStart;
       m_pEditReplaceDlg->m_bEnableScopeSelection = true;
       m_pEditReplaceDlg->m_ptBlockBegin = m_ptSavedSelStart;
@@ -1561,8 +1561,7 @@ SaveLastSearch(LastSearchInfos *lastSearch)
 {
   //  Save Replace parameters for 'F3' command
   m_bLastReplace = true;
-  if (m_pszLastFindWhat != nullptr)
-    free (m_pszLastFindWhat);
+  free (m_pszLastFindWhat);
   m_pszLastFindWhat = tc::tcsdup (lastSearch->m_sText);
   m_dwLastReplaceFlags = 0;
   if (lastSearch->m_bMatchCase)
@@ -1573,13 +1572,6 @@ SaveLastSearch(LastSearchInfos *lastSearch)
     m_dwLastReplaceFlags |= FIND_REGEXP;
   if (lastSearch->m_bNoWrap)
     m_dwLastReplaceFlags |= FIND_NO_WRAP;
-
-  //  Restore selection
-  if (m_bSelectionPushed)
-    {
-      SetSelection (m_ptSavedSelStart, m_ptSavedSelEnd);
-      m_bSelectionPushed = false;
-    }
 
   //  Save search parameters to registry
   VERIFY (AfxGetApp()->WriteProfileInt (EDITPAD_SECTION, _T ("ReplaceFlags"), m_dwLastReplaceFlags));
@@ -1633,8 +1625,7 @@ ReplaceSelection (const tchar_t* pszNewText, size_t cchNewText, DWORD dwFlags, b
           else
             text.Empty ();
           m_pTextBuffer->InsertText (this, ptCursorPos.y, ptCursorPos.x, text, text.GetLength(), y, x, CE_ACTION_REPLACE);  //  [JRT+FRD]
-          if (lpszNewStr != nullptr)
-            free(lpszNewStr);
+          free(lpszNewStr);
         }
     }
   else
@@ -2621,8 +2612,7 @@ OnToolsCharCoding ()
 
           m_pTextBuffer->FlushUndoGroup (this);
         }
-      if (pszNew != nullptr)
-        free (pszNew);
+      free (pszNew);
     }
 }
 

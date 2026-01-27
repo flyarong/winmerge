@@ -228,7 +228,7 @@ STDMETHODIMP_(ULONG) CCustomTextRenderer::XCustomTextRenderer::Release()
 	return pThis->ExternalRelease();
 }
 
-STDMETHODIMP CCustomTextRenderer::XCustomTextRenderer::QueryInterface(REFIID iid, LPVOID far* ppvObj)
+STDMETHODIMP CCustomTextRenderer::XCustomTextRenderer::QueryInterface(REFIID iid, LPVOID* ppvObj)
 {
 	METHOD_PROLOGUE(CCustomTextRenderer, CustomTextRenderer);
 	return pThis->ExternalQueryInterface(&iid, ppvObj);
@@ -242,6 +242,7 @@ CCrystalRendererDirectWrite::CCrystalRendererDirectWrite(int nRenderingMode)
 	: m_pCurrentTextFormat{ nullptr }, m_charSize{}, m_lfBaseFont{}
 	, m_pTextBrush(new CD2DSolidColorBrush(&m_renderTarget, D2D1::ColorF(D2D1::ColorF::Black)))
 	, m_pTempBrush(new CD2DSolidColorBrush(&m_renderTarget, D2D1::ColorF(D2D1::ColorF::Black)))
+	, m_pLineBrush(new CD2DSolidColorBrush(&m_renderTarget, D2D1::ColorF(D2D1::ColorF::Black)))
 	, m_pBackgroundBrush(new CD2DSolidColorBrush(&m_renderTarget, D2D1::ColorF(D2D1::ColorF::White)))
 	, m_pTextRenderer(new CCustomTextRenderer())
 {
@@ -297,17 +298,73 @@ static D2D1_SIZE_F GetCharWidthHeight(IDWriteTextFormat *pTextFormat)
 	return {textMetrics.width, textMetrics.height};
 }
 
+static CComPtr<IDWriteFont> CreateFontFromLOGFONT(const LOGFONT& logFont)
+{
+	IDWriteFactory *pDWriteFactory = AfxGetD2DState()->GetWriteFactory();
+	CComPtr<IDWriteGdiInterop> gdiInterop;
+	HRESULT hr = pDWriteFactory->GetGdiInterop(&gdiInterop);
+	if (FAILED(hr))
+		return nullptr;
+	CComPtr<IDWriteFont> dwriteFont;
+	hr = gdiInterop->CreateFontFromLOGFONT(&logFont, &dwriteFont);
+	if (FAILED(hr))
+		return nullptr;
+	return dwriteFont;
+}
+
+static void GetFontFamilyNameFromFont(IDWriteFont* pFont, wchar_t* fontFamilyName, size_t bufsize)
+{
+	if (!pFont)
+		return;
+	CComPtr<IDWriteFontFamily> pFontFamily;
+	HRESULT hr = pFont->GetFontFamily(&pFontFamily);
+	if (FAILED(hr))
+		return;
+	CComPtr<IDWriteLocalizedStrings> pLocalizedStrings;
+	hr = pFontFamily->GetFamilyNames(&pLocalizedStrings);
+	if (FAILED(hr))
+		return;
+	UINT32 index = 0;
+	BOOL exists = FALSE;
+	hr = pLocalizedStrings->FindLocaleName(L"en-us", &index, &exists);
+	if (FAILED(hr) || !exists)
+		index = 0;
+	UINT32 length = 0;
+	pLocalizedStrings->GetStringLength(index, &length);
+	pLocalizedStrings->GetString(index, fontFamilyName, (std::max)(length + 1, static_cast<UINT32>(bufsize)));
+}
+
+static DWRITE_FONT_WEIGHT GetDWriteFontWeight(const LOGFONT& lf, bool bold)
+{
+	const long weight = bold ? (lf.lfWeight + 300) : lf.lfWeight;
+	if (weight <= 100) return DWRITE_FONT_WEIGHT_THIN;
+	else if (weight <= 200) return DWRITE_FONT_WEIGHT_EXTRA_LIGHT;
+	else if (weight <= 300) return DWRITE_FONT_WEIGHT_LIGHT;
+	else if (weight <= 350) return DWRITE_FONT_WEIGHT_SEMI_LIGHT;
+	else if (weight <= 400) return DWRITE_FONT_WEIGHT_NORMAL;
+	else if (weight <= 500) return DWRITE_FONT_WEIGHT_MEDIUM;
+	else if (weight <= 600) return DWRITE_FONT_WEIGHT_SEMI_BOLD;
+	else if (weight <= 700) return DWRITE_FONT_WEIGHT_BOLD;
+	else if (weight <= 800) return DWRITE_FONT_WEIGHT_EXTRA_BOLD;
+	else if (weight <= 900) return DWRITE_FONT_WEIGHT_BLACK;
+	else return DWRITE_FONT_WEIGHT_EXTRA_BLACK;
+}
+
 void CCrystalRendererDirectWrite::SetFont(const LOGFONT &lf)
 {
+	CComPtr<IDWriteFont> pFont = CreateFontFromLOGFONT(lf);
+	wchar_t fontFamilyName[256]{};
+	GetFontFamilyNameFromFont(pFont, fontFamilyName, std::size(fontFamilyName));
+		
 	m_lfBaseFont = lf;
 	for (int nIndex = 0; nIndex < 4; ++nIndex)
 	{
 		bool bold = (nIndex & 1) != 0;
 		bool italic = (nIndex & 2) != 0;
 		m_pTextFormat[nIndex].reset(new CD2DTextFormat(&m_renderTarget,
-			lf.lfFaceName[0] ? lf.lfFaceName : _T("Courier New"),
+			fontFamilyName[0] ? fontFamilyName : _T("Courier New"),
 			static_cast<FLOAT>(abs(lf.lfHeight == 0 ? 11 : lf.lfHeight)),
-			bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+			GetDWriteFontWeight(lf, bold),
 			italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL));
 		IDWriteTextFormat *pTextFormat = m_pTextFormat[nIndex]->Get();
 		pTextFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -351,6 +408,11 @@ bool CCrystalRendererDirectWrite::GetCharWidth(unsigned start, unsigned end, int
 	bool succeeded = !!GetCharWidth32(dc.m_hDC, start, end, nWidthArray);
 	dc.SelectObject(pOldFont);
 	return succeeded;
+}
+
+void CCrystalRendererDirectWrite::SetLineColor(CEColor clr)
+{
+	m_pLineBrush->SetColor(ColorRefToColorF(clr));
 }
 
 void CCrystalRendererDirectWrite::SetTextColor(CEColor clr)
@@ -418,23 +480,21 @@ void CCrystalRendererDirectWrite::DrawMarginLineNumber(int x, int y, int number)
 
 void CCrystalRendererDirectWrite::DrawBoundaryLine(int left, int right, int y)
 {
-	m_pTempBrush->SetColor(ColorRefToColorF(0));
 	m_renderTarget.DrawLine(
 		{ static_cast<float>(left), static_cast<float>(y) },
-		{ static_cast<float>(right), static_cast<float>(y) }, m_pTempBrush.get());
+		{ static_cast<float>(right), static_cast<float>(y) }, m_pLineBrush.get());
 }
 
 void  CCrystalRendererDirectWrite::DrawGridLine(int x1, int y1, int x2, int y2, int sourceConstantAlpha)
 {
-	m_pTempBrush->SetColor(ColorRefToColorF(0));
 	m_renderTarget.DrawLine(
 		{ static_cast<float>(x1), static_cast<float>(y1) },
-		{ static_cast<float>(x2), static_cast<float>(y2) }, m_pTempBrush.get(), sourceConstantAlpha / 255.f);
+		{ static_cast<float>(x2), static_cast<float>(y2) }, m_pLineBrush.get(), sourceConstantAlpha / 255.f);
 }
 
 void CCrystalRendererDirectWrite::DrawLineCursor(int left, int right, int y, int height)
 {
-	m_pTempBrush->SetColor(ColorRefToColorF(0));
+	m_pTempBrush->SetColor(m_pLineBrush->GetColor());
 	m_pTempBrush->SetOpacity(0.1f);
 	m_renderTarget.DrawLine(
 		{ static_cast<float>(left), static_cast<float>(y) },
@@ -618,7 +678,6 @@ STDMETHODIMP CCrystalRendererDirectWrite::DrawGlyphRun(void* pClientDrawingConte
 
 void CCrystalRendererDirectWrite::DrawRuler(int left, int top, int width, int height, int interval, int offset)
 {
-	m_pTempBrush->SetColor(ColorRefToColorF(0));
 	float bottom = static_cast<float>(top + height) - 0.5f;
 	int prev10 = (offset / 10) * 10;
 	tchar_t szNumbers[32];
